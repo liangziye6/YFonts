@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-ssr
+public/font-index.json
+src-tauri/target
+*.log
+.DS_Store
+Thumbs.db
