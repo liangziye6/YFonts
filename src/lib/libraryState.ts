@@ -17,6 +17,7 @@ export type StoredLibraryState = {
   recentFontIds: string[];
   activeVariantIds: Record<string, string>;
   fontOverrides: Record<string, FontMetadataOverride>;
+  installedFontFiles: Record<string, string[]>;
   categoryLabels: string[];
   previewSize: number;
   projectPacks: ProjectPack[];
@@ -80,6 +81,7 @@ export function applyLibraryState(fonts: FontAsset[], state?: StoredLibraryState
   return fonts.map((font) => ({
     ...font,
     ...state.fontOverrides[font.id],
+    status: state.installedFontFiles[font.id]?.length ? "installed" : font.status,
     isFavorite: favoriteFontIds.has(font.id)
   }));
 }
@@ -226,6 +228,7 @@ function parseLibraryState(value: unknown): StoredLibraryState | undefined {
     recentFontIds: Array.isArray(parsed.recentFontIds) ? parsed.recentFontIds : [],
     activeVariantIds: isRecord(parsed.activeVariantIds) ? parsed.activeVariantIds : {},
     fontOverrides: parseFontOverrides(parsed.fontOverrides),
+    installedFontFiles: parseInstalledFontFiles(parsed.installedFontFiles),
     categoryLabels: parseCategoryLabels(parsed.categoryLabels),
     previewSize: typeof parsed.previewSize === "number" ? parsed.previewSize : 64,
     projectPacks: parseProjectPacks(parsed.projectPacks)
@@ -239,6 +242,25 @@ function parseCategoryLabels(value: unknown) {
     .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
     .map((item) => item.trim())
     .filter(uniqueValues);
+}
+
+function parseInstalledFontFiles(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) return {};
+
+  const installedFiles: Record<string, string[]> = {};
+
+  for (const [fontId, rawPaths] of Object.entries(value)) {
+    if (!Array.isArray(rawPaths)) continue;
+
+    const paths = rawPaths
+      .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+      .map((path) => path.trim())
+      .filter(uniqueValues);
+
+    if (paths.length > 0) installedFiles[fontId] = paths;
+  }
+
+  return installedFiles;
 }
 
 function parseSavedFolderRoots(value: unknown) {

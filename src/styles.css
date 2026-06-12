@@ -3,7 +3,7 @@
   font-family:
     Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   color: #1c2430;
-  background: #edf1f5;
+  background: #eef0f3;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -63,8 +63,10 @@ button {
     "sidebar workspace";
   height: 100vh;
   overflow: hidden;
-  background: #f5f7fa;
-  transition: grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  background: #eef0f3;
+  transition:
+    grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease;
 }
 
 .app-shell.sidebar-collapsed {
@@ -77,8 +79,8 @@ button {
   align-items: stretch;
   min-width: 0;
   color: #293343;
-  border-bottom: 1px solid #dce3ec;
-  background: #fbfcfe;
+  border-bottom: 0;
+  background: #eef0f3;
   user-select: none;
   z-index: 80;
 }
@@ -122,14 +124,15 @@ button {
   color: #ffffff;
   border-radius: 5px;
   overflow: hidden;
-  background: #dce7ff;
+  background: transparent;
 }
 
 .window-titlebar-mark img,
 .brand-mark img {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  max-width: none;
   object-fit: cover;
 }
 
@@ -153,7 +156,7 @@ button {
 
 .window-titlebar-controls button:hover {
   color: #172033;
-  background: #e9edf3;
+  background: #e1e4e9;
 }
 
 .window-titlebar-controls .window-close-button:hover {
@@ -165,12 +168,12 @@ button {
   grid-area: sidebar;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 18px 14px;
+  gap: 18px;
+  padding: 14px 12px 16px;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid #dce3ec;
-  background: #ffffff;
+  border-right: 0;
+  background: #eef0f3;
   transition:
     padding 220ms cubic-bezier(0.22, 1, 0.36, 1),
     gap 220ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -214,7 +217,7 @@ button {
   color: #ffffff;
   border-radius: 8px;
   overflow: hidden;
-  background: #dce7ff;
+  background: transparent;
 }
 
 .brand strong,
@@ -646,6 +649,7 @@ button {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  background: #eef0f3;
 }
 
 .topbar {
@@ -653,9 +657,9 @@ button {
   grid-template-columns: minmax(210px, 320px) minmax(260px, 1fr) auto auto auto auto auto;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #dce3ec;
-  background: rgba(255, 255, 255, 0.94);
+  padding: 10px 12px 10px 4px;
+  border-bottom: 0;
+  background: transparent;
 }
 
 .search-box,
@@ -869,19 +873,22 @@ button {
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 14px;
+  gap: 10px;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 14px;
+  padding: 0 12px 12px 4px;
 }
 
 .browser-pane,
 .details-panel,
 .project-panel {
   min-width: 0;
-  border: 1px solid #dce3ec;
-  background: #ffffff;
+  border: 1px solid #dfe3e8;
+  background: #fbfcfd;
+  box-shadow:
+    0 1px 2px rgba(18, 24, 36, 0.035),
+    0 8px 24px rgba(18, 24, 36, 0.025);
 }
 
 .browser-pane {
@@ -890,7 +897,7 @@ button {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 11px;
 }
 
 .browser-header {
@@ -1721,7 +1728,7 @@ button {
 .side-stack {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  gap: 14px;
+  gap: 10px;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -1734,7 +1741,7 @@ button {
   min-height: 0;
   padding: 16px;
   overflow: auto;
-  border-radius: 8px;
+  border-radius: 11px;
 }
 
 .details-header {
@@ -2066,6 +2073,52 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.system-font-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.system-font-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #778397;
+  font-size: 12px;
+}
+
+.system-font-state i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #a5afbd;
+}
+
+.system-font-state.installed {
+  color: #23734b;
+}
+
+.system-font-state.installed i {
+  background: #16a05d;
+}
+
+.system-font-summary .mini-tool {
+  flex: 0 0 auto;
+}
+
+.system-font-summary .mini-tool.danger {
+  color: #b42318;
+}
+
+.system-font-summary .mini-tool.danger:hover {
+  border-color: #ffc9c5;
+  background: #fff1f0;
 }
 
 .management-button {
@@ -2469,19 +2522,25 @@ button {
 
 .category-manager-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px 32px;
+  position: relative;
+  grid-template-columns: 28px minmax(0, 1fr) 32px 32px;
   align-items: center;
   gap: 6px;
   min-height: 48px;
   padding: 7px 2px;
   border-bottom: 1px solid #edf1f6;
+  transition:
+    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
 }
 
 .category-manager-item:last-child {
   border-bottom: 0;
 }
 
-.category-manager-item > div {
+.category-manager-item-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -2506,6 +2565,142 @@ button {
 .category-rename-row {
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.category-drag-handle {
+  display: grid;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  color: #94a0b0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: grab;
+  touch-action: none;
+  background: transparent;
+}
+
+.category-drag-handle:hover,
+.category-drag-handle:focus-visible {
+  color: #2563eb;
+  border-color: #d7e0eb;
+  outline: none;
+  background: #f8fbff;
+}
+
+.category-drag-handle:active {
+  cursor: grabbing;
+}
+
+.category-manager-list.reordering,
+.category-manager-list.reordering * {
+  user-select: none;
+}
+
+.category-manager-item.dragging {
+  opacity: 0.22;
+  outline: 1px dashed #8bb2ff;
+  outline-offset: -4px;
+  background: #f4f7fc;
+}
+
+.category-manager-item.dragging > * {
+  visibility: hidden;
+}
+
+.category-manager-item.drop-before {
+  transform: translateY(7px);
+}
+
+.category-manager-item.drop-after {
+  transform: translateY(-7px);
+}
+
+.category-manager-item.drop-before::before,
+.category-manager-item.drop-after::after {
+  position: absolute;
+  z-index: 2;
+  right: 2px;
+  left: 2px;
+  height: 2px;
+  border-radius: 999px;
+  content: "";
+  pointer-events: none;
+  background: #2563eb;
+}
+
+.category-manager-item.drop-before::before {
+  top: -1px;
+}
+
+.category-manager-item.drop-after::after {
+  bottom: -1px;
+}
+
+.category-drag-preview {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 32px 32px;
+  align-items: center;
+  gap: 6px;
+  left: var(--category-drag-left);
+  top: var(--category-drag-top);
+  width: var(--category-drag-width);
+  min-height: var(--category-drag-height);
+  padding: 7px 2px;
+  color: #172033;
+  border: 1px solid #9bbcff;
+  border-radius: 9px;
+  cursor: grabbing;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 16px 34px rgba(30, 64, 175, 0.2),
+    0 3px 10px rgba(22, 30, 44, 0.16);
+  transform: scale(1.018) rotate(0.2deg);
+  transform-origin: center;
+  animation: category-drag-lift 130ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: left, top, transform;
+}
+
+.category-drag-preview strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-drag-preview span {
+  color: #718095;
+  font-size: 11px;
+}
+
+.category-drag-preview-handle,
+.category-drag-preview-action {
+  display: grid;
+  width: 28px;
+  height: 32px;
+  place-items: center;
+  color: #6d7f9a;
+}
+
+.category-drag-preview-action {
+  width: 32px;
+  opacity: 0.52;
+}
+
+@keyframes category-drag-lift {
+  from {
+    opacity: 0.75;
+    transform: scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1.018) rotate(0.2deg);
+  }
 }
 
 .category-icon-button {
@@ -3229,13 +3424,13 @@ button {
 .app-shell.dark {
   color-scheme: dark;
   color: #dedfe3;
-  background: #0d0e11;
+  background: #0f0f10;
 }
 
 .app-shell.dark .window-titlebar {
   color: #d9dbe2;
-  border-color: #292b31;
-  background: #111216;
+  border-color: transparent;
+  background: #0f0f10;
 }
 
 .app-shell.dark .window-titlebar-developer {
@@ -3248,7 +3443,7 @@ button {
 
 .app-shell.dark .window-titlebar-controls button:hover {
   color: #f2f3f5;
-  background: #25272d;
+  background: #27272a;
 }
 
 .app-shell.dark .window-titlebar-controls .window-close-button:hover {
@@ -3256,8 +3451,6 @@ button {
   background: #e5484d;
 }
 
-.app-shell.dark .sidebar,
-.app-shell.dark .topbar,
 .app-shell.dark .browser-pane,
 .app-shell.dark .details-panel,
 .app-shell.dark .project-panel,
@@ -3265,16 +3458,28 @@ button {
 .app-shell.dark .category-manager-dialog,
 .app-shell.dark .folder-scan-dialog,
 .app-shell.dark .settings-panel {
-  border-color: #292b31;
-  background: #141519;
+  border-color: #29292d;
+  background: #151516;
 }
 
+.app-shell.dark .sidebar,
 .app-shell.dark .topbar {
-  background: rgba(20, 21, 25, 0.96);
+  border-color: transparent;
+  background: #0f0f10;
 }
 
 .app-shell.dark .workspace {
-  background: #0d0e11;
+  background: #0f0f10;
+}
+
+.app-shell.dark .browser-pane,
+.app-shell.dark .details-panel,
+.app-shell.dark .project-panel {
+  border-color: #29292d;
+  background: #181819;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.22),
+    0 10px 30px rgba(0, 0, 0, 0.12);
 }
 
 .app-shell.dark .search-box,
@@ -3306,13 +3511,13 @@ button {
 .app-shell.dark .project-rename-inline input,
 .app-shell.dark .compare-row {
   color: #dedfe3;
-  border-color: #303239;
-  background: #1b1c21;
+  border-color: #303034;
+  background: #1e1e20;
 }
 
 .app-shell.dark input,
 .app-shell.dark select {
-  color: #e5edf8;
+  color: #e6e6e8;
   background-color: transparent;
 }
 
@@ -3326,14 +3531,14 @@ button {
 
 .app-shell.dark .filter-control.labelled select {
   color: #dedfe3;
-  border-color: #303239;
-  background: #1b1c21;
+  border-color: #303034;
+  background: #1e1e20;
 }
 
 .app-shell.dark .filter-menu-button.active {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .filter-count {
@@ -3347,7 +3552,7 @@ button {
 
 .app-shell.dark select option {
   color: #dedfe3;
-  background: #1b1c21;
+  background: #1e1e20;
 }
 
 .app-shell.dark .browser-header,
@@ -3355,8 +3560,8 @@ button {
 .app-shell.dark .bulk-action-bar,
 .app-shell.dark .recent-strip,
 .app-shell.dark .compare-panel header {
-  border-color: #292b31;
-  background: #141519;
+  border-color: #29292d;
+  background: #151516;
 }
 
 .app-shell.dark .brand span,
@@ -3417,7 +3622,7 @@ button {
 .app-shell.dark .file-item.active {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .nav-item,
@@ -3430,7 +3635,7 @@ button {
 .app-shell.dark .project-tree-title:hover,
 .app-shell.dark .project-pack-item > button:hover {
   color: #dedfe3;
-  background: #1f2026;
+  background: #222224;
 }
 
 .app-shell.dark .nav-item.active,
@@ -3438,13 +3643,13 @@ button {
 .app-shell.dark .project-pack-item.active > button {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .project-pack-item.context-target > button:first-child {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .row-menu button,
@@ -3457,7 +3662,7 @@ button {
 .app-shell.dark .project-context-menu button:hover,
 .app-shell.dark .import-menu button:hover {
   color: #f5f5f6;
-  background: #25262c;
+  background: #27272a;
 }
 
 .app-shell.dark .row-menu button:disabled,
@@ -3490,28 +3695,28 @@ button {
 
 .app-shell.dark .variant-popover-item:hover {
   color: #f5f5f6;
-  border-color: #454852;
-  background: #25262c;
+  border-color: #454549;
+  background: #27272a;
 }
 
 .app-shell.dark .variant-popover-item.active {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .management-button,
 .app-shell.dark .weight-strip span,
 .app-shell.dark .weight-preview-control {
   color: #dedfe3;
-  border-color: #303239;
-  background: #1b1c21;
+  border-color: #303034;
+  background: #1e1e20;
 }
 
 .app-shell.dark .management-button:hover {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .management-button.danger {
@@ -3519,6 +3724,32 @@ button {
 }
 
 .app-shell.dark .management-button.danger:hover {
+  color: #ffb7b2;
+  border-color: #653b3b;
+  background: #2a1919;
+}
+
+.app-shell.dark .system-font-state {
+  color: #93969f;
+}
+
+.app-shell.dark .system-font-state i {
+  background: #65666d;
+}
+
+.app-shell.dark .system-font-state.installed {
+  color: #7ed9a6;
+}
+
+.app-shell.dark .system-font-state.installed i {
+  background: #35bd74;
+}
+
+.app-shell.dark .system-font-summary .mini-tool.danger {
+  color: #ff9b95;
+}
+
+.app-shell.dark .system-font-summary .mini-tool.danger:hover {
   color: #ffb7b2;
   border-color: #653b3b;
   background: #2a1919;
@@ -3535,7 +3766,7 @@ button {
 
 .app-shell.dark .project-pack-list,
 .app-shell.dark .project-subpack-list {
-  border-color: #303239;
+  border-color: #303034;
 }
 
 .app-shell.dark .project-add-button {
@@ -3545,14 +3776,14 @@ button {
 .app-shell.dark .project-add-button:hover {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .license-pill,
 .app-shell.dark .chip,
 .app-shell.dark .tag-wrap span {
-  border-color: #34363e;
-  background: #1b1c21;
+  border-color: #343438;
+  background: #1e1e20;
 }
 
 .app-shell.dark .license-pill.good,
@@ -3589,7 +3820,7 @@ button {
 .app-shell.dark .font-row.selected,
 .app-shell.dark .font-row.batch-selected {
   border-color: #5965e8;
-  background: #191a20;
+  background: #1c1c1e;
   box-shadow: 0 0 0 1px rgba(89, 101, 232, 0.22);
 }
 
@@ -3606,17 +3837,56 @@ button {
 
 .app-shell.dark .category-manager-list,
 .app-shell.dark .category-manager-item {
-  border-color: #292b31;
+  border-color: #29292d;
 }
 
 .app-shell.dark .category-icon-button {
   color: #9a9da5;
 }
 
+.app-shell.dark .category-drag-handle {
+  color: #777a83;
+}
+
+.app-shell.dark .category-drag-handle:hover,
+.app-shell.dark .category-drag-handle:focus-visible {
+  color: #cbd1ff;
+  border-color: #3c3c40;
+  background: #252527;
+}
+
+.app-shell.dark .category-manager-item.dragging {
+  outline-color: #5965e8;
+  background: #202025;
+}
+
+.app-shell.dark .category-manager-item.drop-before::before,
+.app-shell.dark .category-manager-item.drop-after::after {
+  background: #7180ff;
+}
+
+.app-shell.dark .category-drag-preview {
+  color: #f5f5f6;
+  border-color: #6571f0;
+  background: rgba(32, 32, 35, 0.98);
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(113, 128, 255, 0.14);
+}
+
+.app-shell.dark .category-drag-preview span {
+  color: #a7a9b1;
+}
+
+.app-shell.dark .category-drag-preview-handle,
+.app-shell.dark .category-drag-preview-action {
+  color: #aeb4e9;
+}
+
 .app-shell.dark .category-icon-button:hover {
   color: #cbd1ff;
-  border-color: #3c3f49;
-  background: #22242a;
+  border-color: #3c3c40;
+  background: #252527;
 }
 
 .app-shell.dark .category-icon-button:disabled:hover {
@@ -3645,8 +3915,8 @@ button {
 
 .app-shell.dark .library-drawer {
   color: #dedfe3;
-  border-left-color: #292b31;
-  background: #141519;
+  border-left-color: #29292d;
+  background: #151516;
   box-shadow: -18px 0 38px rgba(0, 0, 0, 0.36);
   scrollbar-color: #5b5e68 transparent;
 }
@@ -3670,8 +3940,8 @@ button {
 .app-shell.dark .path-list span,
 .app-shell.dark .empty-duplicate-state {
   color: #dedfe3;
-  border-color: #303239;
-  background: #1b1c21;
+  border-color: #303034;
+  background: #1e1e20;
 }
 
 .app-shell.dark .library-drawer-head span,
@@ -3707,13 +3977,13 @@ button {
 .app-shell.dark .duplicate-item-head button:hover {
   color: #cbd1ff;
   border-color: #5965e8;
-  background: #25283a;
+  background: #232326;
 }
 
 .app-shell.dark .source-actions button:disabled:hover {
   color: #dedfe3;
-  border-color: #303239;
-  background: #1b1c21;
+  border-color: #303034;
+  background: #1e1e20;
 }
 
 .app-shell.dark .source-actions button.danger,

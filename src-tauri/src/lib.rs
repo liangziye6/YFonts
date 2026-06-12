@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "ttc", "woff", "woff2"];
+const INSTALLABLE_FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "ttc"];
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +62,22 @@ struct ExportProjectPackResult {
     path: Option<String>,
     copied_files: usize,
     skipped_files: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FontSystemOperationResult {
+    target_dir: String,
+    paths: Vec<String>,
+    completed_files: usize,
+    skipped_files: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemFontDetectionResult {
+    installed: bool,
+    matches: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,6 +215,136 @@ fn validate_font_location_target(target: &Path) -> Result<(), String> {
 #[tauri::command]
 fn diagnose_font_location(path: String) -> Result<FontLocationDiagnostic, String> {
     Ok(diagnose_location_path(&path))
+}
+
+#[tauri::command]
+fn detect_system_font(
+    family: String,
+    filenames: Vec<String>,
+) -> Result<SystemFontDetectionResult, String> {
+    let mut candidates = vec![family];
+    candidates.extend(filenames.into_iter().filter_map(|filename| {
+        Path::new(&filename)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_string())
+    }));
+    let candidates = candidates
+        .into_iter()
+        .map(|value| normalize_font_match_key(&value))
+        .filter(|value| value.len() >= 3)
+        .collect::<Vec<_>>();
+
+    let catalog = system_font_catalog();
+    let matches = catalog
+        .into_iter()
+        .filter(|entry| {
+            let normalized_entry = normalize_font_match_key(entry);
+            candidates.iter().any(|candidate| {
+                normalized_entry == *candidate
+                    || (candidate.len() >= 6 && normalized_entry.contains(candidate))
+                    || (normalized_entry.len() >= 6 && candidate.contains(&normalized_entry))
+            })
+        })
+        .take(12)
+        .collect::<Vec<_>>();
+
+    Ok(SystemFontDetectionResult {
+        installed: !matches.is_empty(),
+        matches,
+    })
+}
+
+#[tauri::command]
+fn install_font_files(paths: Vec<String>) -> Result<FontSystemOperationResult, String> {
+    let target_dir = user_font_dir()?;
+    fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+
+    let mut installed_paths = Vec::new();
+    let mut skipped_files = 0;
+
+    for input_path in paths {
+        let source = PathBuf::from(input_path);
+        if !is_installable_font_file(&source) {
+            skipped_files += 1;
+            continue;
+        }
+
+        let source = source.canonicalize().map_err(|error| error.to_string())?;
+        let filename = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "Invalid font filename".to_string())?;
+        let source_key = source.to_string_lossy();
+        let installed_filename = format!(
+            "YFonts-{}-{}",
+            create_id(&source_key),
+            sanitize_filename(filename)
+        );
+        let destination = target_dir.join(installed_filename);
+
+        if !destination.exists() {
+            fs::copy(&source, &destination).map_err(|error| error.to_string())?;
+        }
+
+        if let Err(error) = register_installed_font(&destination) {
+            let _ = fs::remove_file(&destination);
+            return Err(error);
+        }
+
+        installed_paths.push(destination.to_string_lossy().to_string());
+    }
+
+    refresh_user_font_cache();
+
+    Ok(FontSystemOperationResult {
+        target_dir: target_dir.to_string_lossy().to_string(),
+        completed_files: installed_paths.len(),
+        skipped_files,
+        paths: installed_paths,
+    })
+}
+
+#[tauri::command]
+fn uninstall_font_files(paths: Vec<String>) -> Result<FontSystemOperationResult, String> {
+    let target_dir = user_font_dir()?;
+    let normalized_target = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.clone());
+    let mut removed_paths = Vec::new();
+    let mut skipped_files = 0;
+
+    for input_path in paths {
+        let path = PathBuf::from(input_path);
+        let normalized_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let is_yfonts_copy = normalized_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|filename| filename.starts_with("YFonts-"))
+            .unwrap_or(false);
+
+        if !normalized_path.starts_with(&normalized_target) || !is_yfonts_copy {
+            skipped_files += 1;
+            continue;
+        }
+        if !normalized_path.exists() {
+            removed_paths.push(normalized_path.to_string_lossy().to_string());
+            continue;
+        }
+
+        unregister_installed_font(&normalized_path);
+        fs::remove_file(&normalized_path).map_err(|error| error.to_string())?;
+        removed_paths.push(normalized_path.to_string_lossy().to_string());
+    }
+
+    refresh_user_font_cache();
+
+    Ok(FontSystemOperationResult {
+        target_dir: target_dir.to_string_lossy().to_string(),
+        completed_files: removed_paths.len(),
+        skipped_files,
+        paths: removed_paths,
+    })
 }
 
 #[tauri::command]
@@ -735,6 +882,260 @@ fn is_copyable_font_file(path: &Path) -> bool {
     FONT_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
 }
 
+fn is_installable_font_file(path: &Path) -> bool {
+    if !path.exists() || !path.is_file() {
+        return false;
+    }
+
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|extension| {
+            INSTALLABLE_FONT_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+        })
+        .unwrap_or(false)
+}
+
+fn normalize_font_match_key(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|character| character.is_alphanumeric())
+        .collect()
+}
+
+fn append_font_files(path: &Path, catalog: &mut Vec<String>, depth: usize) {
+    if depth > 5 || !path.is_dir() {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            append_font_files(&entry_path, catalog, depth + 1);
+            continue;
+        }
+        if !is_installable_font_file(&entry_path) {
+            continue;
+        }
+        if let Some(filename) = entry_path.file_stem().and_then(|value| value.to_str()) {
+            catalog.push(filename.to_string());
+        }
+    }
+}
+
+fn system_font_catalog() -> Vec<String> {
+    let mut catalog = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        if let Some(windows_dir) = env::var_os("WINDIR") {
+            append_font_files(&PathBuf::from(windows_dir).join("Fonts"), &mut catalog, 0);
+        }
+        if let Ok(user_dir) = user_font_dir() {
+            append_font_files(&user_dir, &mut catalog, 0);
+        }
+
+        for key in [
+            r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+            r"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+        ] {
+            if let Ok(output) = Command::new("reg.exe")
+                .args(["query", key])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+            {
+                catalog.extend(
+                    String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(|line| line.to_string()),
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        append_font_files(Path::new("/Library/Fonts"), &mut catalog, 0);
+        append_font_files(Path::new("/System/Library/Fonts"), &mut catalog, 0);
+        if let Some(home) = env::var_os("HOME") {
+            append_font_files(&PathBuf::from(home).join("Library").join("Fonts"), &mut catalog, 0);
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        append_font_files(Path::new("/usr/share/fonts"), &mut catalog, 0);
+        append_font_files(Path::new("/usr/local/share/fonts"), &mut catalog, 0);
+        if let Ok(user_dir) = user_font_dir() {
+            append_font_files(&user_dir, &mut catalog, 0);
+        }
+    }
+
+    catalog
+}
+
+fn user_font_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let local_app_data =
+            env::var_os("LOCALAPPDATA").ok_or_else(|| "LOCALAPPDATA is unavailable".to_string())?;
+        return Ok(PathBuf::from(local_app_data)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Fonts"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var_os("HOME").ok_or_else(|| "HOME is unavailable".to_string())?;
+        return Ok(PathBuf::from(home).join("Library").join("Fonts"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(data_home) = env::var_os("XDG_DATA_HOME") {
+            return Ok(PathBuf::from(data_home).join("fonts"));
+        }
+
+        let home = env::var_os("HOME").ok_or_else(|| "HOME is unavailable".to_string())?;
+        return Ok(PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("fonts"));
+    }
+
+    #[allow(unreachable_code)]
+    Err("Font installation is not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn register_installed_font(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::Graphics::Gdi::AddFontResourceExW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_FONTCHANGE,
+    };
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Invalid installed font filename".to_string())?;
+    let value_name = format!("YFonts::{}", filename);
+    let path_value = path.to_string_lossy().to_string();
+    let status = Command::new("reg.exe")
+        .args([
+            "add",
+            r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+            "/v",
+            &value_name,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &path_value,
+            "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| error.to_string())?;
+
+    if !status.success() {
+        return Err("Unable to register the font for the current Windows user".to_string());
+    }
+
+    let wide_path = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let added = unsafe { AddFontResourceExW(wide_path.as_ptr(), 0, std::ptr::null_mut()) };
+    if added == 0 {
+        return Err("Windows could not activate the installed font".to_string());
+    }
+
+    unsafe {
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_FONTCHANGE,
+            0,
+            0,
+            SMTO_ABORTIFHUNG,
+            1000,
+            std::ptr::null_mut(),
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn register_installed_font(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn unregister_installed_font(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::Graphics::Gdi::RemoveFontResourceExW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_FONTCHANGE,
+    };
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    if let Some(filename) = path.file_name().and_then(|value| value.to_str()) {
+        let value_name = format!("YFonts::{}", filename);
+        let _ = Command::new("reg.exe")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+                "/v",
+                &value_name,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+
+    let wide_path = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        RemoveFontResourceExW(wide_path.as_ptr(), 0, std::ptr::null_mut());
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_FONTCHANGE,
+            0,
+            0,
+            SMTO_ABORTIFHUNG,
+            1000,
+            std::ptr::null_mut(),
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unregister_installed_font(_path: &Path) {}
+
+fn refresh_user_font_cache() {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = Command::new("fc-cache").args(["-f"]).status();
+    }
+}
+
 fn unique_child_dir(parent: &Path, folder_name: &str) -> PathBuf {
     let mut candidate = parent.join(folder_name);
     let mut index = 2;
@@ -1257,6 +1658,9 @@ pub fn run() {
             pick_font_folder_path,
             open_font_location,
             diagnose_font_location,
+            detect_system_font,
+            install_font_files,
+            uninstall_font_files,
             save_text_file,
             export_project_pack_bundle,
             read_app_data_file,

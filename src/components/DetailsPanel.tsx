@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Download,
   EyeOff,
   ExternalLink,
   FileText,
@@ -8,6 +9,7 @@ import {
   Info,
   Pause,
   Play,
+  PackageMinus,
   RotateCcw,
   ShieldCheck,
   Type,
@@ -38,6 +40,10 @@ type DetailsPanelProps = {
   axisValues?: FontAxisValues;
   isHidden: boolean;
   isRemoved: boolean;
+  isDesktopRuntime: boolean;
+  isInstalledByYFonts: boolean;
+  systemFontStatus?: "checking" | "installed" | "not-installed" | "unavailable";
+  isSystemFontBusy: boolean;
   onSelectVariant: (fontId: string, variantId: string) => void;
   onToggleAutoPlayVariants: () => void;
   onAxisValueChange: (fontId: string, axisTag: string, value: number) => void;
@@ -47,6 +53,8 @@ type DetailsPanelProps = {
   onRestoreToLibrary: (fontId: string) => void;
   onUpdateFontMetadata: (fontId: string, patch: FontMetadataOverride) => void;
   onAddToCurrentProjectPack: (fontId: string) => void;
+  onInstallFont: (fontId: string) => void;
+  onUninstallFont: (fontId: string) => void;
   onOpenLocation: (font: FontAsset) => void;
   onOpenLicense: (font: FontAsset) => void;
 };
@@ -63,6 +71,10 @@ export function DetailsPanel({
   axisValues,
   isHidden,
   isRemoved,
+  isDesktopRuntime,
+  isInstalledByYFonts,
+  systemFontStatus,
+  isSystemFontBusy,
   onSelectVariant,
   onToggleAutoPlayVariants,
   onAxisValueChange,
@@ -72,6 +84,8 @@ export function DetailsPanel({
   onRestoreToLibrary,
   onUpdateFontMetadata,
   onAddToCurrentProjectPack,
+  onInstallFont,
+  onUninstallFont,
   onOpenLocation,
   onOpenLicense
 }: DetailsPanelProps) {
@@ -365,6 +379,51 @@ export function DetailsPanel({
         <p className="detail-note">
           {t.defaultInstallTarget}: {platform.installTarget}
         </p>
+      </section>
+
+      <section className="detail-section">
+        <h3>
+          <Download size={16} />
+          {t.systemFont}
+        </h3>
+        <div className="system-font-summary">
+          <span
+            className={
+              isInstalledByYFonts || systemFontStatus === "installed"
+                ? "system-font-state installed"
+                : "system-font-state"
+            }
+          >
+            <i />
+            {isSystemFontBusy
+              ? isInstalledByYFonts
+                ? t.uninstallingFont
+                : t.installingFont
+              : isInstalledByYFonts
+                ? t.installedByYFonts
+                : systemFontStatus === "installed"
+                  ? t.systemFontInstalled
+                  : systemFontStatus === "not-installed"
+                    ? t.systemFontNotInstalled
+                    : systemFontStatus === "checking"
+                      ? t.checkingSystemFont
+                      : t.desktopInstallOnly}
+          </span>
+          {isDesktopRuntime && (isInstalledByYFonts || systemFontStatus === "not-installed") && (
+            <button
+              className={isInstalledByYFonts ? "mini-tool danger" : "mini-tool"}
+              type="button"
+              disabled={isSystemFontBusy}
+              onClick={() =>
+                isInstalledByYFonts ? onUninstallFont(font.id) : onInstallFont(font.id)
+              }
+              title={isInstalledByYFonts ? t.uninstallFont : t.fontInstallHint}
+            >
+              {isInstalledByYFonts ? <PackageMinus size={14} /> : <Download size={14} />}
+              <span>{isInstalledByYFonts ? t.uninstallFont : t.installFont}</span>
+            </button>
+          )}
+        </div>
       </section>
 
       <section className="detail-section">

@@ -286,7 +286,7 @@ export function Sidebar({
             <img src={appIcon} alt="" />
           </div>
           <div>
-            <strong>YFonts 1.15</strong>
+            <strong>YFonts 1.16</strong>
             <span>{t.appSubtitle}</span>
           </div>
         </div>

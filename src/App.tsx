@@ -4,9 +4,10 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
   type WheelEvent
 } from "react";
-import { Pencil, Plus, Tags, Trash2, X } from "lucide-react";
+import { GripVertical, Pencil, Plus, Tags, Trash2, X } from "lucide-react";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { FontList } from "./components/FontList";
 import {
@@ -87,6 +88,20 @@ const builtInCategories = [
 
 type ThemeMode = "light" | "dark";
 
+type FontSystemOperationResult = {
+  targetDir: string;
+  paths: string[];
+  completedFiles: number;
+  skippedFiles: number;
+};
+
+type SystemFontDetectionResult = {
+  installed: boolean;
+  matches: string[];
+};
+
+type SystemFontStatus = "checking" | "installed" | "not-installed" | "unavailable";
+
 function getFontFaceWeightDescriptor(font: FontAsset, variant: FontVariant) {
   const weightAxis = isVariableFontVariant(variant)
     ? font.variableAxes?.find((axis) => axis.tag === "wght")
@@ -130,6 +145,7 @@ function App() {
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("all");
   const [activeVariantIds, setActiveVariantIds] = useState<Record<string, string>>({});
   const [fontOverrides, setFontOverrides] = useState<Record<string, FontMetadataOverride>>({});
+  const [installedFontFiles, setInstalledFontFiles] = useState<Record<string, string[]>>({});
   const [categoryLabels, setCategoryLabels] = useState<string[]>(builtInCategories);
   const [recentFontIds, setRecentFontIds] = useState<string[]>([]);
   const [hiddenFontIds, setHiddenFontIds] = useState<Set<string>>(new Set());
@@ -150,6 +166,8 @@ function App() {
   const [isComparePanelOpen, setIsComparePanelOpen] = useState(false);
   const [projectPacks, setProjectPacks] = useState<ProjectPack[]>([]);
   const [selectedProjectPackId, setSelectedProjectPackId] = useState<string>();
+  const [systemFontBusyId, setSystemFontBusyId] = useState<string>();
+  const [systemFontStatuses, setSystemFontStatuses] = useState<Record<string, SystemFontStatus>>({});
   const [notice, setNotice] = useState("");
 
   const platform = platformProfiles[detectPlatform()];
@@ -205,16 +223,15 @@ function App() {
         : visibleFonts;
 
   const categories = useMemo(() => {
-    const nextCategories = Array.from(
-      new Set([...categoryLabels, ...sectionBaseFonts.map((font) => font.category)])
-    ).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+    const nextCategories = uniqueStrings([
+      ...categoryLabels,
+      ...sectionBaseFonts.map((font) => font.category)
+    ]);
     return [t.all, ...nextCategories];
   }, [categoryLabels, sectionBaseFonts]);
 
   const metadataCategories = useMemo(() => {
-    return Array.from(new Set([...categoryLabels, ...fonts.map((font) => font.category)]))
-      .filter((item) => item.trim().length > 0)
-      .sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+    return uniqueStrings([...categoryLabels, ...fonts.map((font) => font.category)]);
   }, [categoryLabels, fonts]);
 
   const counts = useMemo(() => {
@@ -439,6 +456,58 @@ function App() {
   }, [selectedFont?.id]);
 
   useEffect(() => {
+    if (!selectedFont) return;
+
+    const fontId = selectedFont.id;
+    if ((installedFontFiles[fontId]?.length ?? 0) > 0) {
+      setSystemFontStatuses((currentStatuses) => ({
+        ...currentStatuses,
+        [fontId]: "installed"
+      }));
+      return;
+    }
+    if (!isTauriRuntime()) {
+      setSystemFontStatuses((currentStatuses) => ({
+        ...currentStatuses,
+        [fontId]: "unavailable"
+      }));
+      return;
+    }
+    if (systemFontStatuses[fontId] && systemFontStatuses[fontId] !== "checking") return;
+
+    let cancelled = false;
+    setSystemFontStatuses((currentStatuses) => ({
+      ...currentStatuses,
+      [fontId]: "checking"
+    }));
+
+    void invokeTauri<SystemFontDetectionResult>("detect_system_font", {
+      family: selectedFont.family,
+      filenames: selectedFont.variants
+        .map((variant) => variant.path ?? variant.relativePath ?? "")
+        .filter(Boolean)
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setSystemFontStatuses((currentStatuses) => ({
+          ...currentStatuses,
+          [fontId]: result.installed ? "installed" : "not-installed"
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSystemFontStatuses((currentStatuses) => ({
+          ...currentStatuses,
+          [fontId]: "unavailable"
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [installedFontFiles, selectedFont?.id]);
+
+  useEffect(() => {
     if (!isLibraryStateReady) return;
 
     void saveLibraryStateAsync(libraryKey, {
@@ -448,6 +517,7 @@ function App() {
       recentFontIds,
       activeVariantIds,
       fontOverrides,
+      installedFontFiles,
       categoryLabels,
       previewSize,
       projectPacks
@@ -459,6 +529,7 @@ function App() {
     fonts,
     hiddenFontIds,
     isLibraryStateReady,
+    installedFontFiles,
     libraryKey,
     previewSize,
     projectPacks,
@@ -546,6 +617,8 @@ function App() {
     setSelectedId(preferredId ?? fallbackFont?.id);
     setActiveVariantIds(filterExistingVariantIds(savedState?.activeVariantIds ?? {}, hydratedFonts));
     setFontOverrides(savedState?.fontOverrides ?? {});
+    setInstalledFontFiles(savedState?.installedFontFiles ?? {});
+    setSystemFontStatuses({});
     setCategoryLabels(
       uniqueStrings([
         ...(savedState?.categoryLabels?.length ? savedState.categoryLabels : builtInCategories),
@@ -1068,6 +1141,91 @@ function App() {
     setNotice(t.metadataUpdated);
   }
 
+  async function installFont(fontId: string) {
+    const font = fonts.find((candidate) => candidate.id === fontId);
+    if (!font) return;
+    if (!isTauriRuntime()) {
+      setNotice(t.desktopInstallOnly);
+      return;
+    }
+
+    const paths = uniqueStrings(
+      font.variants
+        .filter((variant) => ["ttf", "otf", "ttc"].includes(variant.extension.toLowerCase()))
+        .map((variant) => variant.path ?? "")
+        .filter(Boolean)
+    );
+    if (paths.length === 0) {
+      setNotice(t.noInstallableFontFiles);
+      return;
+    }
+
+    setSystemFontBusyId(fontId);
+    try {
+      const result = await invokeTauri<FontSystemOperationResult>("install_font_files", { paths });
+      if (result.paths.length === 0) {
+        setNotice(t.noInstallableFontFiles);
+        return;
+      }
+
+      setInstalledFontFiles((currentFiles) => ({
+        ...currentFiles,
+        [fontId]: result.paths
+      }));
+      setSystemFontStatuses((currentStatuses) => ({
+        ...currentStatuses,
+        [fontId]: "installed"
+      }));
+      setFonts((currentFonts) =>
+        currentFonts.map((currentFont) =>
+          currentFont.id === fontId ? { ...currentFont, status: "installed" } : currentFont
+        )
+      );
+      setNotice(`${t.fontInstalled}: ${result.completedFiles} ${t.fileCount}`);
+    } catch (error) {
+      setNotice(`${t.fontInstallFailed}: ${getErrorMessage(error)}`);
+    } finally {
+      setSystemFontBusyId(undefined);
+    }
+  }
+
+  async function uninstallFont(fontId: string) {
+    const paths = installedFontFiles[fontId] ?? [];
+    if (paths.length === 0) return;
+    if (!isTauriRuntime()) {
+      setNotice(t.desktopInstallOnly);
+      return;
+    }
+    if (!window.confirm(t.confirmUninstallFont)) return;
+
+    setSystemFontBusyId(fontId);
+    try {
+      const result = await invokeTauri<FontSystemOperationResult>("uninstall_font_files", {
+        paths
+      });
+      setInstalledFontFiles((currentFiles) => {
+        const nextFiles = { ...currentFiles };
+        delete nextFiles[fontId];
+        return nextFiles;
+      });
+      setSystemFontStatuses((currentStatuses) => {
+        const nextStatuses = { ...currentStatuses };
+        delete nextStatuses[fontId];
+        return nextStatuses;
+      });
+      setFonts((currentFonts) =>
+        currentFonts.map((currentFont) =>
+          currentFont.id === fontId ? { ...currentFont, status: "indexed" } : currentFont
+        )
+      );
+      setNotice(`${t.fontUninstalled}: ${result.completedFiles} ${t.fileCount}`);
+    } catch (error) {
+      setNotice(`${t.fontUninstallFailed}: ${getErrorMessage(error)}`);
+    } finally {
+      setSystemFontBusyId(undefined);
+    }
+  }
+
   function updateSelectedFontsMetadata(patch: FontMetadataOverride) {
     const selectedIds = getSelectedFontIds();
     if (selectedIds.size === 0) return;
@@ -1178,6 +1336,29 @@ function App() {
     );
     if (category === categoryName) setCategory(t.all);
     setNotice(`${t.categoryRemoved}: ${categoryName}`);
+  }
+
+  function moveCategoryLabel(
+    categoryName: string,
+    targetName: string,
+    placement: "before" | "after"
+  ) {
+    if (categoryName === targetName) return;
+
+    setCategoryLabels((currentLabels) => {
+      const sourceIndex = currentLabels.indexOf(categoryName);
+      const targetIndex = currentLabels.indexOf(targetName);
+      if (sourceIndex < 0 || targetIndex < 0) return currentLabels;
+
+      const nextLabels = currentLabels.filter((label) => label !== categoryName);
+      const nextTargetIndex = nextLabels.indexOf(targetName);
+      const insertionIndex = nextTargetIndex + (placement === "after" ? 1 : 0);
+      nextLabels.splice(insertionIndex, 0, categoryName);
+
+      return nextLabels.every((label, index) => label === currentLabels[index])
+        ? currentLabels
+        : nextLabels;
+    });
   }
 
   function updateDetailFontMetadata(fontId: string, patch: FontMetadataOverride) {
@@ -1914,6 +2095,14 @@ function App() {
               axisValues={selectedFont ? fontAxisValues[selectedFont.id] : undefined}
               isHidden={selectedFontIsHidden}
               isRemoved={selectedFontIsRemoved}
+              isDesktopRuntime={isTauriRuntime()}
+              isInstalledByYFonts={
+                selectedFont ? (installedFontFiles[selectedFont.id]?.length ?? 0) > 0 : false
+              }
+              systemFontStatus={
+                selectedFont ? systemFontStatuses[selectedFont.id] : undefined
+              }
+              isSystemFontBusy={selectedFont?.id === systemFontBusyId}
               onSelectVariant={selectVariant}
               onToggleAutoPlayVariants={() =>
                 setIsAutoPlayingVariants((isAutoPlaying) => !isAutoPlaying)
@@ -1925,6 +2114,8 @@ function App() {
               onRestoreToLibrary={restoreToLibrary}
               onUpdateFontMetadata={updateDetailFontMetadata}
               onAddToCurrentProjectPack={addFontToCurrentProjectPack}
+              onInstallFont={installFont}
+              onUninstallFont={uninstallFont}
               onOpenLocation={openLocation}
               onOpenLicense={openLicense}
             />
@@ -1962,6 +2153,7 @@ function App() {
         onCreate={createCategoryLabel}
         onRename={renameCategoryLabel}
         onRemove={removeCategoryLabel}
+        onMove={moveCategoryLabel}
       />
 
       <FolderScanDialog
@@ -1994,7 +2186,8 @@ function CategoryManagerDialog({
   onClose,
   onCreate,
   onRename,
-  onRemove
+  onRemove,
+  onMove
 }: {
   open: boolean;
   categories: string[];
@@ -2003,16 +2196,45 @@ function CategoryManagerDialog({
   onCreate: (name: string) => void;
   onRename: (currentName: string, nextName: string) => void;
   onRemove: (name: string) => void;
+  onMove: (name: string, targetName: string, placement: "before" | "after") => void;
 }) {
   const [newCategory, setNewCategory] = useState("");
   const [editingCategory, setEditingCategory] = useState<string>();
   const [editingValue, setEditingValue] = useState("");
+  const [draggingCategory, setDraggingCategory] = useState<string>();
+  const [dropTarget, setDropTarget] = useState<{
+    name: string;
+    placement: "before" | "after";
+  }>();
+  const [dragPreview, setDragPreview] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }>();
+  const categoryListRef = useRef<HTMLDivElement>(null);
+  const dragListenersCleanupRef = useRef<() => void>();
+  const dragStateRef = useRef<{
+    categoryName: string;
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+    handle: HTMLButtonElement;
+    targetName?: string;
+    placement?: "before" | "after";
+  }>();
 
   useEffect(() => {
     if (!open) {
       setNewCategory("");
       setEditingCategory(undefined);
       setEditingValue("");
+      setDraggingCategory(undefined);
+      setDropTarget(undefined);
+      setDragPreview(undefined);
+      dragListenersCleanupRef.current?.();
+      dragListenersCleanupRef.current = undefined;
+      dragStateRef.current = undefined;
       return;
     }
 
@@ -2029,6 +2251,12 @@ function CategoryManagerDialog({
     document.addEventListener("keydown", handleKeyboard);
     return () => document.removeEventListener("keydown", handleKeyboard);
   }, [editingCategory, onClose, open]);
+
+  useEffect(() => {
+    return () => {
+      dragListenersCleanupRef.current?.();
+    };
+  }, []);
 
   if (!open) return null;
 
@@ -2054,6 +2282,134 @@ function CategoryManagerDialog({
     onRename(editingCategory, editingValue);
     setEditingCategory(undefined);
     setEditingValue("");
+  }
+
+  function beginCategoryDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    categoryName: string
+  ) {
+    if (event.button !== 0) return;
+
+    const categoryItem = event.currentTarget.closest<HTMLElement>(".category-manager-item");
+    if (!categoryItem) return;
+
+    const itemRect = categoryItem.getBoundingClientRect();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStateRef.current = {
+      categoryName,
+      pointerId: event.pointerId,
+      offsetX: event.clientX - itemRect.left,
+      offsetY: event.clientY - itemRect.top,
+      handle: event.currentTarget
+    };
+    setDraggingCategory(categoryName);
+    setDropTarget(undefined);
+    setDragPreview({
+      left: itemRect.left,
+      top: itemRect.top,
+      width: itemRect.width,
+      height: itemRect.height
+    });
+
+    function handlePointerMove(pointerEvent: PointerEvent) {
+      if (pointerEvent.pointerId !== event.pointerId) return;
+      pointerEvent.preventDefault();
+      updateCategoryDrag(pointerEvent.pointerId, pointerEvent.clientX, pointerEvent.clientY);
+    }
+
+    function handlePointerUp(pointerEvent: PointerEvent) {
+      if (pointerEvent.pointerId !== event.pointerId) return;
+      completeCategoryDrag(pointerEvent.pointerId, true);
+    }
+
+    function handlePointerCancel(pointerEvent: PointerEvent) {
+      if (pointerEvent.pointerId !== event.pointerId) return;
+      completeCategoryDrag(pointerEvent.pointerId, false);
+    }
+
+    const cleanupListeners = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+    dragListenersCleanupRef.current?.();
+    dragListenersCleanupRef.current = cleanupListeners;
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+  }
+
+  function updateCategoryDrag(pointerId: number, clientX: number, clientY: number) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== pointerId) return;
+
+    setDragPreview((currentPreview) =>
+      currentPreview
+        ? {
+            ...currentPreview,
+            left: clientX - dragState.offsetX,
+            top: clientY - dragState.offsetY
+          }
+        : currentPreview
+    );
+
+    const list = categoryListRef.current;
+    if (list) {
+      const listRect = list.getBoundingClientRect();
+      const edgeSize = 42;
+      if (clientY < listRect.top + edgeSize) list.scrollTop -= 14;
+      if (clientY > listRect.bottom - edgeSize) list.scrollTop += 14;
+    }
+
+    const targetItem = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>(".category-manager-item[data-category-name]");
+    const targetName = targetItem?.dataset.categoryName;
+    if (!targetItem || !targetName || targetName === dragState.categoryName) {
+      setDropTarget(undefined);
+      dragState.targetName = undefined;
+      dragState.placement = undefined;
+      return;
+    }
+
+    const targetRect = targetItem.getBoundingClientRect();
+    const placement = clientY < targetRect.top + targetRect.height / 2 ? "before" : "after";
+    dragState.targetName = targetName;
+    dragState.placement = placement;
+    setDropTarget({ name: targetName, placement });
+  }
+
+  function completeCategoryDrag(pointerId: number, shouldCommit: boolean) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== pointerId) return;
+
+    if (dragState.handle.hasPointerCapture(pointerId)) {
+      dragState.handle.releasePointerCapture(pointerId);
+    }
+    if (
+      shouldCommit &&
+      dragState.targetName &&
+      dragState.placement &&
+      dragState.targetName !== dragState.categoryName
+    ) {
+      onMove(dragState.categoryName, dragState.targetName, dragState.placement);
+    }
+    dragListenersCleanupRef.current?.();
+    dragListenersCleanupRef.current = undefined;
+    dragStateRef.current = undefined;
+    setDraggingCategory(undefined);
+    setDropTarget(undefined);
+    setDragPreview(undefined);
+  }
+
+  function moveCategoryWithKeyboard(categoryName: string, direction: -1 | 1) {
+    const categoryIndex = categories.indexOf(categoryName);
+    const targetIndex = categoryIndex + direction;
+    const targetName = categories[targetIndex];
+    if (!targetName) return;
+
+    onMove(categoryName, targetName, direction < 0 ? "before" : "after");
   }
 
   return (
@@ -2089,12 +2445,23 @@ function CategoryManagerDialog({
           </button>
         </form>
 
-        <div className="category-manager-list">
+        <div
+          className={`category-manager-list${draggingCategory ? " reordering" : ""}`}
+          ref={categoryListRef}
+        >
           {categories.map((categoryName) => {
             const isEditing = editingCategory === categoryName;
             const isProtected = categoryName === t.cnOther || categoryName === t.enOther;
+            const dropPlacement =
+              dropTarget?.name === categoryName ? ` drop-${dropTarget.placement}` : "";
             return (
-              <div className="category-manager-item" key={categoryName}>
+              <div
+                className={`category-manager-item${
+                  draggingCategory === categoryName ? " dragging" : ""
+                }${dropPlacement}`}
+                data-category-name={categoryName}
+                key={categoryName}
+              >
                 {isEditing ? (
                   <form
                     className="category-rename-row"
@@ -2124,7 +2491,27 @@ function CategoryManagerDialog({
                   </form>
                 ) : (
                   <>
-                    <div>
+                    <button
+                      className="category-drag-handle"
+                      type="button"
+                      title={t.reorderCategory}
+                      aria-label={`${t.reorderCategory}: ${categoryName}`}
+                      aria-pressed={draggingCategory === categoryName}
+                      onPointerDown={(event) => beginCategoryDrag(event, categoryName)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          moveCategoryWithKeyboard(categoryName, -1);
+                        }
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          moveCategoryWithKeyboard(categoryName, 1);
+                        }
+                      }}
+                    >
+                      <GripVertical size={16} />
+                    </button>
+                    <div className="category-manager-item-label">
                       <strong>{categoryName}</strong>
                       <span>
                         {categoryCounts.get(categoryName) ?? 0} {t.fontsUnit}
@@ -2158,6 +2545,36 @@ function CategoryManagerDialog({
         </div>
         <p className="category-manager-note">{t.categoryManagerHint}</p>
       </section>
+      {dragPreview && draggingCategory ? (
+        <div
+          className="category-drag-preview"
+          style={
+            {
+              "--category-drag-left": `${dragPreview.left}px`,
+              "--category-drag-top": `${dragPreview.top}px`,
+              "--category-drag-width": `${dragPreview.width}px`,
+              "--category-drag-height": `${dragPreview.height}px`
+            } as CSSProperties
+          }
+          aria-hidden="true"
+        >
+          <span className="category-drag-preview-handle">
+            <GripVertical size={16} />
+          </span>
+          <div className="category-manager-item-label">
+            <strong>{draggingCategory}</strong>
+            <span>
+              {categoryCounts.get(draggingCategory) ?? 0} {t.fontsUnit}
+            </span>
+          </div>
+          <span className="category-drag-preview-action">
+            <Pencil size={15} />
+          </span>
+          <span className="category-drag-preview-action">
+            <Trash2 size={15} />
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3468,6 +3885,10 @@ function revokeFontObjectUrls(fonts: FontAsset[]) {
   }
 
   urls.forEach((url) => URL.revokeObjectURL(url));
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export default App;
