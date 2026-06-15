@@ -22,6 +22,7 @@ type FontListProps = {
   selectedFontIds: Set<string>;
   activeVariantIds: Record<string, string>;
   fontAxisValues: Record<string, FontAxisValues>;
+  scrollTarget?: { fontId: string; requestId: number };
   emptyTitle?: string;
   emptyHint?: string;
   onSelect: (fontId: string, options?: { range?: boolean }) => void;
@@ -61,6 +62,7 @@ export function FontList({
   selectedFontIds,
   activeVariantIds,
   fontAxisValues,
+  scrollTarget,
   emptyTitle,
   emptyHint,
   onSelect,
@@ -140,6 +142,20 @@ export function FontList({
     setViewport((current) => ({ ...current, scrollTop: 0 }));
     setMenuState(undefined);
   }, [listIdentity]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !scrollTarget) return;
+
+    const targetIndex = fonts.findIndex((font) => font.id === scrollTarget.fontId);
+    if (targetIndex < 0) return;
+
+    const centeredTop = targetIndex * rowStride - Math.max(0, (list.clientHeight - rowHeight) / 2);
+    list.scrollTo({
+      top: Math.max(0, centeredTop),
+      behavior: "smooth"
+    });
+  }, [fonts, rowHeight, rowStride, scrollTarget]);
 
   useEffect(() => {
     onVisibleFontIdsChange?.(renderedFontIds);
@@ -495,6 +511,10 @@ function FontActionMenu({
   onCopyFontName: (font: FontAsset) => void;
   onCopyFontPath: (font: FontAsset) => void;
 }) {
+  const onlineFont =
+    font.source === "fontsource" ||
+    font.source === "google-fonts";
+
   function runAction(action: () => void) {
     action();
     onClose();
@@ -518,13 +538,17 @@ function FontActionMenu({
             <Star size={15} />
             {font.isFavorite ? t.cancelFavorite : t.favorite}
           </button>
-          <button
-            type="button"
-            onClick={() => runAction(() => (isHidden ? onRestoreFont(font.id) : onHideFont(font.id)))}
-          >
-            {isHidden ? <RotateCcw size={15} /> : <EyeOff size={15} />}
-            {isHidden ? t.restoreFont : t.hideFont}
-          </button>
+          {!onlineFont && (
+            <button
+              type="button"
+              onClick={() =>
+                runAction(() => (isHidden ? onRestoreFont(font.id) : onHideFont(font.id)))
+              }
+            >
+              {isHidden ? <RotateCcw size={15} /> : <EyeOff size={15} />}
+              {isHidden ? t.restoreFont : t.hideFont}
+            </button>
+          )}
         </>
       )}
       {isProjectPackView && onRemoveFromProjectPack && !isRemoved && (
@@ -533,10 +557,12 @@ function FontActionMenu({
           {t.removeFontFromPack}
         </button>
       )}
-      <button type="button" onClick={() => runAction(() => onOpenLocation(font))}>
-        <FolderOpen size={15} />
-        {t.openLocation}
-      </button>
+      {!onlineFont && (
+        <button type="button" onClick={() => runAction(() => onOpenLocation(font))}>
+          <FolderOpen size={15} />
+          {t.openLocation}
+        </button>
+      )}
       <button type="button" onClick={() => runAction(() => onCopyFontName(font))}>
         <Copy size={15} />
         {t.copyFontName}
@@ -545,7 +571,7 @@ function FontActionMenu({
         <Copy size={15} />
         {t.copyFontPath}
       </button>
-      {!isRemoved && (
+      {!onlineFont && !isRemoved && (
         <button
           className="danger"
           type="button"

@@ -13,6 +13,7 @@ using large personal font collections.
 - Search, filter, favorite, hide, remove, and restore fonts.
 - Build project font packs with drag-and-drop organization.
 - Open the source location of a font from the desktop application.
+- Check GitHub Releases for application updates from Library Settings.
 - Use light and dark themes with an integrated desktop title bar.
 - Keep library indexes, project packs, and personal paths on the local device.
 

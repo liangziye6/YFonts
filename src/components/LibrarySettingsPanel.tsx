@@ -2,17 +2,27 @@ import {
   CheckCircle2,
   Clipboard,
   Database,
+  Download,
   Eye,
+  ExternalLink,
   FileUp,
   FolderOpen,
   HardDrive,
   Layers2,
   RefreshCcw,
+  Rocket,
   Settings2,
   Trash2,
   X
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import {
+  appVersion,
+  checkForAppUpdate,
+  isNewerAppVersion,
+  openExternalUrl,
+  type AppRelease
+} from "../lib/appUpdate";
 import { t } from "../lib/i18n";
 import type { LocalFontIndex } from "../lib/localFontIndex";
 import type { PlatformProfile } from "../lib/platform";
@@ -81,6 +91,11 @@ type LibrarySettingsPanelProps = {
   onRemoveAllDuplicateExtras: () => void;
 };
 
+type UpdateCheckState =
+  | { status: "idle" | "checking" }
+  | { status: "current" | "available" | "ahead"; release: AppRelease }
+  | { status: "error" };
+
 export function LibrarySettingsPanel({
   open,
   localIndex,
@@ -102,6 +117,8 @@ export function LibrarySettingsPanel({
   onRemoveDuplicateExtras,
   onRemoveAllDuplicateExtras
 }: LibrarySettingsPanelProps) {
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({ status: "idle" });
+
   useEffect(() => {
     if (!open) return;
 
@@ -116,11 +133,33 @@ export function LibrarySettingsPanel({
     };
   }, [onClose, open]);
 
+  useEffect(() => {
+    if (!open || updateCheck.status !== "idle") return;
+    void runUpdateCheck(false);
+  }, [open, updateCheck.status]);
+
   if (!open) return null;
 
   const hasLocalIndex = Boolean(localIndex);
   const root = localIndex?.root ?? t.previewLibrary;
   const generatedAt = localIndex ? formatDateTime(localIndex.generatedAt) : t.previewOnly;
+
+  async function runUpdateCheck(force: boolean) {
+    setUpdateCheck({ status: "checking" });
+    try {
+      const release = await checkForAppUpdate(force);
+      setUpdateCheck({
+        status: isNewerAppVersion(release.version)
+          ? "available"
+          : isNewerAppVersion(appVersion, release.version)
+            ? "ahead"
+            : "current",
+        release
+      });
+    } catch {
+      setUpdateCheck({ status: "error" });
+    }
+  }
 
   return (
     <div className="library-drawer-shell" role="dialog" aria-modal="true" aria-label={t.librarySettings}>
@@ -182,6 +221,97 @@ export function LibrarySettingsPanel({
               <Clipboard size={16} />
             </button>
           </div>
+        </section>
+
+        <section className="drawer-section app-update-section">
+          <div className="drawer-section-head">
+            <h3>
+              <Rocket size={16} />
+              {t.appUpdate}
+            </h3>
+            <span className="update-version-chip">v{appVersion}</span>
+          </div>
+          <div
+            className={
+              updateCheck.status === "available"
+                ? "app-update-card update-available"
+                : "app-update-card"
+            }
+          >
+            <div className="app-update-status">
+              <span
+                className={
+                  updateCheck.status === "available"
+                    ? "status-dot update"
+                    : updateCheck.status === "current"
+                      ? "status-dot good"
+                      : "status-dot"
+                }
+              />
+              <div>
+                <strong>
+                  {updateCheck.status === "checking" || updateCheck.status === "idle"
+                    ? t.checkingForUpdates
+                    : updateCheck.status === "available"
+                      ? `${t.updateAvailable}: v${updateCheck.release.version}`
+                      : updateCheck.status === "ahead"
+                        ? t.appAheadOfRelease
+                      : updateCheck.status === "current"
+                        ? t.appUpToDate
+                        : t.updateCheckFailed}
+                </strong>
+                <span>
+                  {updateCheck.status === "available" || updateCheck.status === "current"
+                    ? `${t.currentVersion} v${appVersion} · ${t.latestVersion} v${updateCheck.release.version}`
+                    : updateCheck.status === "ahead"
+                      ? `${t.currentVersion} v${appVersion} · ${t.publishedVersion} v${updateCheck.release.version}`
+                    : `${t.currentVersion} v${appVersion}`}
+                </span>
+              </div>
+            </div>
+            <div className="app-update-actions">
+              {updateCheck.status === "available" && (
+                <button
+                  className="command-button"
+                  type="button"
+                  onClick={() =>
+                    void openExternalUrl(
+                      updateCheck.release.downloadUrl ?? updateCheck.release.releaseUrl
+                    )
+                  }
+                >
+                  <Download size={15} />
+                  {t.downloadUpdate}
+                </button>
+              )}
+              {(updateCheck.status === "available" ||
+                updateCheck.status === "current" ||
+                updateCheck.status === "ahead") && (
+                <button
+                  className="command-button ghost"
+                  type="button"
+                  onClick={() => void openExternalUrl(updateCheck.release.releaseUrl)}
+                >
+                  <ExternalLink size={15} />
+                  {t.viewRelease}
+                </button>
+              )}
+              {updateCheck.status === "error" && (
+                <button
+                  className="command-button ghost"
+                  type="button"
+                  onClick={() => void runUpdateCheck(true)}
+                >
+                  <RefreshCcw size={15} />
+                  {t.checkAgain}
+                </button>
+              )}
+              {(updateCheck.status === "checking" || updateCheck.status === "idle") && (
+                <RefreshCcw className="update-check-spinner" size={16} aria-hidden="true" />
+              )}
+            </div>
+          </div>
+          <p className="drawer-section-note">{t.updateCheckHint}</p>
         </section>
 
         <section className="drawer-section">

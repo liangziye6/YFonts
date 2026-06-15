@@ -1,5 +1,6 @@
 import {
   ChevronRight,
+  CloudDownload,
   Grid2X2,
   HardDrive,
   EyeOff,
@@ -18,6 +19,7 @@ import {
 import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import appIcon from "../assets/yfonts-icon.png";
 import { t } from "../lib/i18n";
+import { appVersion } from "../lib/appUpdate";
 import type { ProjectPack } from "../types";
 
 export type SectionId =
@@ -54,6 +56,7 @@ const sections: Array<{
 }> = [
   { id: "all", label: t.allFonts, icon: Grid2X2 },
   { id: "local", label: t.localFontPacks, icon: HardDrive },
+  { id: "online", label: t.onlineDiscover, icon: CloudDownload },
   { id: "free", label: t.freeCommercial, icon: ShieldCheck },
   { id: "favorites", label: t.favorites, icon: Star },
   { id: "hidden", label: t.hiddenFonts, icon: EyeOff },
@@ -286,7 +289,7 @@ export function Sidebar({
             <img src={appIcon} alt="" />
           </div>
           <div>
-            <strong>YFonts 1.16</strong>
+            <strong>YFonts {appVersion}</strong>
             <span>{t.appSubtitle}</span>
           </div>
         </div>

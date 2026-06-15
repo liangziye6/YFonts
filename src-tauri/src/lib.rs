@@ -39,6 +39,12 @@ struct FontRecord {
     added_at: String,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct FontNames {
+    family: Option<String>,
+    style: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveTextFileResult {
@@ -71,6 +77,22 @@ struct FontSystemOperationResult {
     paths: Vec<String>,
     completed_files: usize,
     skipped_files: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OnlineFontFile {
+    url: String,
+    filename: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnlineFontDownloadResult {
+    status: String,
+    target_dir: Option<String>,
+    paths: Vec<String>,
+    failed_files: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -218,6 +240,46 @@ fn diagnose_font_location(path: String) -> Result<FontLocationDiagnostic, String
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/liangziye6/YFonts/") {
+        return Err("Only the official YFonts GitHub page can be opened".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        Command::new("explorer.exe")
+            .arg(&url)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Opening external links is not supported on this platform".to_string())
+}
+
+#[tauri::command]
 fn detect_system_font(
     family: String,
     filenames: Vec<String>,
@@ -345,6 +407,92 @@ fn uninstall_font_files(paths: Vec<String>) -> Result<FontSystemOperationResult,
         skipped_files,
         paths: removed_paths,
     })
+}
+
+#[tauri::command]
+fn download_online_font_files(
+    family: String,
+    files: Vec<OnlineFontFile>,
+) -> Result<OnlineFontDownloadResult, String> {
+    let Some(parent_dir) = rfd::FileDialog::new()
+        .set_title("Choose font download folder")
+        .pick_folder()
+    else {
+        return Ok(OnlineFontDownloadResult {
+            status: "cancelled".to_string(),
+            target_dir: None,
+            paths: Vec::new(),
+            failed_files: 0,
+        });
+    };
+
+    let target_dir = parent_dir.join(sanitize_folder_name(&family));
+    fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("YFonts/1.18")
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut downloaded_paths = Vec::new();
+    let mut failed_files = 0;
+
+    for file in files {
+        if !is_allowed_online_font_url(&file.url) {
+            failed_files += 1;
+            continue;
+        }
+
+        let filename = sanitize_filename(&file.filename);
+        let extension = Path::new(&filename)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        if !extension
+            .as_deref()
+            .map(|value| FONT_EXTENSIONS.contains(&value))
+            .unwrap_or(false)
+        {
+            failed_files += 1;
+            continue;
+        }
+
+        let response = match client.get(&file.url).send().and_then(|response| response.error_for_status()) {
+            Ok(response) => response,
+            Err(_) => {
+                failed_files += 1;
+                continue;
+            }
+        };
+        if response.content_length().unwrap_or(0) > 128 * 1024 * 1024 {
+            failed_files += 1;
+            continue;
+        }
+
+        let bytes = match response.bytes() {
+            Ok(bytes) if bytes.len() <= 128 * 1024 * 1024 => bytes,
+            _ => {
+                failed_files += 1;
+                continue;
+            }
+        };
+        let destination = target_dir.join(&filename);
+        if fs::write(&destination, &bytes).is_err() {
+            failed_files += 1;
+            continue;
+        }
+
+        downloaded_paths.push(destination.to_string_lossy().to_string());
+    }
+
+    Ok(OnlineFontDownloadResult {
+        status: "picked".to_string(),
+        target_dir: Some(target_dir.to_string_lossy().to_string()),
+        paths: downloaded_paths,
+        failed_files,
+    })
+}
+
+fn is_allowed_online_font_url(value: &str) -> bool {
+    value.starts_with("https://cdn.jsdelivr.net/fontsource/fonts/")
 }
 
 #[tauri::command]
@@ -511,12 +659,18 @@ fn push_font_record(root: &Path, entry_path: &Path, fonts: &mut Vec<FontRecord>)
         .to_string();
     let folder_name = pick_family_folder(directory_parts, &root_name);
     let category = infer_category(directory_parts);
-    let family = clean_family_name(&folder_name, base_name);
-    let source_library = directory_parts
-        .first()
-        .copied()
-        .unwrap_or(&root_name)
-        .to_string();
+    let font_names = read_font_names(entry_path);
+    let family = font_names
+        .as_ref()
+        .and_then(|names| names.family.as_deref())
+        .and_then(normalize_internal_font_name)
+        .unwrap_or_else(|| clean_family_name(&folder_name, base_name));
+    let style_name = font_names
+        .as_ref()
+        .and_then(|names| names.style.as_deref())
+        .and_then(normalize_internal_font_name)
+        .unwrap_or_else(|| infer_style_name(base_name));
+    let source_library = pick_source_library(directory_parts, &root_name);
 
     let language = detect_font_language(entry_path).unwrap_or_else(|| {
         infer_language(&source_library, &category, &family, base_name)
@@ -525,7 +679,7 @@ fn push_font_record(root: &Path, entry_path: &Path, fonts: &mut Vec<FontRecord>)
     fonts.push(FontRecord {
         id: format!("scan-{}", create_id(&format!("{}|{}", root.to_string_lossy(), relative_path))),
         family: family.clone(),
-        style_name: infer_style_name(base_name),
+        style_name: style_name.clone(),
         category: category.clone(),
         source_library: source_library.clone(),
         language,
@@ -537,7 +691,7 @@ fn push_font_record(root: &Path, entry_path: &Path, fonts: &mut Vec<FontRecord>)
         size_label: format_size(metadata.len()),
         font_url: None,
         font_format: font_format(&extension),
-        weight: infer_weight(base_name),
+        weight: infer_weight(&format!("{base_name} {style_name}")),
         added_at: current_date_label(),
     });
 
@@ -576,6 +730,149 @@ fn detect_font_language(path: &Path) -> Option<String> {
     } else {
         "english".to_string()
     })
+}
+
+fn read_font_names(path: &Path) -> Option<FontNames> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "ttf" | "otf" | "ttc") {
+        return None;
+    }
+
+    let bytes = fs::read(path).ok()?;
+    extract_font_names(&bytes)
+}
+
+fn extract_font_names(bytes: &[u8]) -> Option<FontNames> {
+    let font_offset = if bytes.get(..4)? == b"ttcf" {
+        let face_count = read_u32(bytes, 8)?;
+        if face_count == 0 {
+            return None;
+        }
+        read_u32(bytes, 12)? as usize
+    } else {
+        0
+    };
+    let table_count = read_u16(bytes, font_offset + 4)? as usize;
+
+    for index in 0..table_count {
+        let record_offset = font_offset + 12 + index * 16;
+        if bytes.get(record_offset..record_offset + 4)? != b"name" {
+            continue;
+        }
+
+        let table_offset = read_u32(bytes, record_offset + 8)? as usize;
+        let table_length = read_u32(bytes, record_offset + 12)? as usize;
+        let table = bytes.get(table_offset..table_offset.checked_add(table_length)?)?;
+        return extract_names_from_name_table(table);
+    }
+
+    None
+}
+
+fn extract_names_from_name_table(table: &[u8]) -> Option<FontNames> {
+    let record_count = read_u16(table, 2)? as usize;
+    let strings_offset = read_u16(table, 4)? as usize;
+    let mut family: Option<(u16, String)> = None;
+    let mut style: Option<(u16, String)> = None;
+
+    for index in 0..record_count {
+        let record_offset = 6 + index * 12;
+        let platform_id = read_u16(table, record_offset)?;
+        let encoding_id = read_u16(table, record_offset + 2)?;
+        let language_id = read_u16(table, record_offset + 4)?;
+        let name_id = read_u16(table, record_offset + 6)?;
+        if !matches!(name_id, 1 | 2 | 16 | 17) {
+            continue;
+        }
+
+        let length = read_u16(table, record_offset + 8)? as usize;
+        let offset = read_u16(table, record_offset + 10)? as usize;
+        let start = strings_offset.checked_add(offset)?;
+        let raw = table.get(start..start.checked_add(length)?)?;
+        let Some(value) = decode_font_name(platform_id, encoding_id, raw) else {
+            continue;
+        };
+        let score = font_name_score(platform_id, language_id, name_id);
+        let target = if matches!(name_id, 1 | 16) {
+            &mut family
+        } else {
+            &mut style
+        };
+        if target
+            .as_ref()
+            .map_or(true, |(current_score, _)| score > *current_score)
+        {
+            *target = Some((score, value));
+        }
+    }
+
+    let names = FontNames {
+        family: family.map(|(_, value)| value),
+        style: style.map(|(_, value)| value),
+    };
+    if names.family.is_none() && names.style.is_none() {
+        None
+    } else {
+        Some(names)
+    }
+}
+
+fn decode_font_name(platform_id: u16, _encoding_id: u16, bytes: &[u8]) -> Option<String> {
+    let value = if matches!(platform_id, 0 | 3) {
+        if bytes.len() % 2 != 0 {
+            return None;
+        }
+        let units = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).ok()?
+    } else if platform_id == 1 && bytes.iter().all(|byte| byte.is_ascii()) {
+        String::from_utf8(bytes.to_vec()).ok()?
+    } else {
+        return None;
+    };
+
+    let cleaned = value
+        .trim_matches(|character: char| character.is_whitespace() || character == '\0')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+fn font_name_score(platform_id: u16, language_id: u16, name_id: u16) -> u16 {
+    let name_score = match name_id {
+        16 | 17 => 100,
+        1 | 2 => 50,
+        _ => 0,
+    };
+    let platform_score = match platform_id {
+        3 => 30,
+        0 => 20,
+        1 => 10,
+        _ => 0,
+    };
+    let language_score = match language_id {
+        0x0804 | 0x1004 | 0x0404 | 0x0c04 => 8,
+        0x0409 => 6,
+        _ => 0,
+    };
+    name_score + platform_score + language_score
+}
+
+fn normalize_internal_font_name(value: &str) -> Option<String> {
+    let cleaned = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.chars().count() < 2
+        || is_generic_font_folder(&cleaned)
+        || is_broad_category_folder(&cleaned)
+    {
+        return None;
+    }
+    Some(cleaned)
 }
 
 fn read_cmap_table(path: &Path) -> Result<Vec<u8>, String> {
@@ -1246,29 +1543,116 @@ fn pick_family_folder(directory_parts: &[&str], root_name: &str) -> String {
         }
     }
 
-    root_name.to_string()
+    if directory_parts
+        .iter()
+        .any(|folder| is_broad_category_folder(folder))
+    {
+        return String::new();
+    }
+    clean_root_family_label(root_name)
+}
+
+fn clean_root_family_label(value: &str) -> String {
+    if is_generic_font_folder(value) || is_broad_category_folder(value) {
+        return String::new();
+    }
+
+    let trimmed = value.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    for suffix in ["-main", "_main", " main", "-master", "_master", " master", "-release", "_release", " release", "-source", "_source", " source"] {
+        if lowered.ends_with(suffix) {
+            return trimmed[..trimmed.len() - suffix.len()]
+                .trim_matches(['-', '_', ' '])
+                .to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 fn is_generic_font_folder(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
+    let normalized = value
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '_'], "-");
+
+    normalized.ends_with("-webfont")
+        || normalized.ends_with("-webfonts")
+        || matches!(
+        normalized.as_str(),
         "static"
+            | "static-font"
+            | "static-fonts"
+            | "variable"
             | "variable font"
             | "variable fonts"
+            | "variable-font"
+            | "variable-fonts"
+            | "web"
+            | "web-font"
+            | "web-fonts"
             | "webfont"
             | "webfonts"
             | "font"
             | "fonts"
             | "font files"
+            | "font-files"
             | "ttf"
             | "otf"
             | "woff"
             | "woff2"
             | "desktop"
-    )
+            | "truetype"
+            | "postscript"
+            | "opentype"
+            | "opentype-ps"
+            | "opentype-tt"
+            | "variable-ps"
+            | "variable-tt"
+            | "web-ps"
+            | "web-tt"
+        )
+}
+
+fn pick_source_library(directory_parts: &[&str], root_name: &str) -> String {
+    directory_parts
+        .iter()
+        .find(|folder| !is_generic_font_folder(folder) && !is_broad_category_folder(folder))
+        .copied()
+        .unwrap_or(root_name)
+        .to_string()
 }
 
 fn is_broad_category_folder(value: &str) -> bool {
+    if matches!(
+        value.trim(),
+        "\u{4e2d}\u{6587}"
+            | "\u{82f1}\u{6587}"
+            | "\u{4e2d}\u{6587}\u{5b57}\u{4f53}"
+            | "\u{82f1}\u{6587}\u{5b57}\u{4f53}"
+            | "\u{672c}\u{5730}"
+            | "\u{9ed1}\u{4f53}"
+            | "\u{5b8b}\u{4f53}"
+            | "\u{6977}\u{4f53}"
+            | "\u{5706}\u{4f53}"
+            | "\u{96b6}\u{4e66}"
+            | "\u{7bc6}\u{4f53}"
+            | "\u{624b}\u{5199}"
+            | "\u{624b}\u{5199}\u{4f53}"
+            | "\u{590d}\u{53e4}"
+            | "\u{590d}\u{53e4}\u{4f53}"
+            | "\u{521b}\u{610f}"
+            | "\u{521b}\u{610f}\u{4f53}"
+            | "\u{7ebf}\u{4f53}"
+            | "\u{886c}\u{7ebf}"
+            | "\u{65e0}\u{886c}\u{7ebf}"
+            | "\u{5361}\u{901a}"
+            | "\u{5361}\u{901a}\u{4f53}"
+            | "\u{827a}\u{672f}"
+            | "\u{827a}\u{672f}\u{4f53}"
+    ) {
+        return true;
+    }
+
     let normalized = value.trim().to_ascii_lowercase();
     matches!(
         normalized.as_str(),
@@ -1294,34 +1678,108 @@ fn is_broad_category_folder(value: &str) -> bool {
             | "隶书"
             | "篆体"
             | "手写"
+            | "手写体"
             | "复古"
+            | "复古体"
             | "创意"
+            | "创意体"
             | "线体"
             | "衬线"
             | "无衬线"
             | "卡通"
+            | "卡通体"
             | "艺术"
+            | "艺术体"
     )
 }
 
 fn clean_family_name(folder_name: &str, base_name: &str) -> String {
-    let folder = folder_name
-        .trim_start_matches(|value: char| value.is_ascii_digit() || value == '-' || value == '_' || value.is_whitespace())
-        .replace("static", "")
-        .replace("Static", "")
-        .replace("variable fonts", "")
-        .replace("Variable Fonts", "")
-        .trim()
-        .to_string();
-    let base = strip_style_suffix(base_name);
+    let folder_candidate = clean_root_family_label(folder_name);
+    let folder = strip_family_instance_suffix(
+        &(if is_generic_font_folder(&folder_candidate) {
+            ""
+        } else {
+            &folder_candidate
+        })
+            .trim_start_matches(|value: char| value.is_ascii_digit() || value == '-' || value == '_' || value.is_whitespace())
+            .replace("static", "")
+            .replace("Static", "")
+            .replace("variable fonts", "")
+            .replace("Variable Fonts", "")
+            .trim()
+            .to_string(),
+    );
+    let base = strip_family_instance_suffix(&strip_style_suffix(base_name));
 
     if folder.chars().count() >= 2 {
-        folder
+        let should_use_base_casing = normalize_font_match_key(&folder)
+            == normalize_font_match_key(&base)
+            && folder == folder.to_lowercase()
+            && base.chars().any(|character| character.is_ascii_uppercase());
+        if should_use_base_casing {
+            base
+        } else {
+            folder
+        }
     } else if !base.is_empty() {
         base
     } else {
         base_name.to_string()
     }
+}
+
+fn strip_family_instance_suffix(value: &str) -> String {
+    let mut result = value.trim_matches(['-', '_', ' ']).to_string();
+    let lowered = result.to_ascii_lowercase();
+
+    for (index, character) in lowered.char_indices() {
+        if !matches!(character, '-' | '_' | ' ') {
+            continue;
+        }
+        let tail = &lowered[index + character.len_utf8()..];
+        let token = tail
+            .split(['-', '_', ' '])
+            .next()
+            .unwrap_or_default();
+        let numeric = token
+            .strip_suffix("pt")
+            .or_else(|| token.strip_suffix("opsz"));
+        if numeric.is_some_and(|digits| !digits.is_empty() && digits.chars().all(|digit| digit.is_ascii_digit())) {
+            result.truncate(index);
+            return result.trim_matches(['-', '_', ' ']).to_string();
+        }
+    }
+
+    let lowered = result.to_ascii_lowercase();
+    for suffix in [
+        "ultracondensed",
+        "extracondensed",
+        "semicondensed",
+        "condensed",
+        "narrow",
+        "semiexpanded",
+        "extraexpanded",
+        "ultraexpanded",
+        "expanded",
+        "wide",
+    ] {
+        if !lowered.ends_with(suffix) {
+            continue;
+        }
+        let start = result.len() - suffix.len();
+        let has_boundary = start == 0
+            || result[..start]
+                .chars()
+                .last()
+                .is_some_and(|character| matches!(character, '-' | '_' | ' '))
+            || result.as_bytes()[start].is_ascii_uppercase();
+        if has_boundary {
+            result.truncate(start);
+            return result.trim_matches(['-', '_', ' ']).to_string();
+        }
+    }
+
+    result
 }
 
 fn strip_style_suffix(value: &str) -> String {
@@ -1360,6 +1818,18 @@ fn strip_style_suffix(value: &str) -> String {
 fn infer_style_name(name: &str) -> String {
     let normalized = name.to_ascii_lowercase();
     let mut styles = Vec::new();
+    let width_tokens = [
+        ("ultracondensed", "UltraCondensed"),
+        ("extracondensed", "ExtraCondensed"),
+        ("semicondensed", "SemiCondensed"),
+        ("condensed", "Condensed"),
+        ("narrow", "Narrow"),
+        ("semiexpanded", "SemiExpanded"),
+        ("extraexpanded", "ExtraExpanded"),
+        ("ultraexpanded", "UltraExpanded"),
+        ("expanded", "Expanded"),
+        ("wide", "Wide"),
+    ];
     let tokens = [
         ("thin", "Thin"),
         ("extralight", "ExtraLight"),
@@ -1380,6 +1850,13 @@ fn infer_style_name(name: &str) -> String {
 
     if normalized.contains("variablefont") || normalized.contains("vf") {
         styles.push("Variable");
+    }
+
+    if let Some((_, label)) = width_tokens
+        .iter()
+        .find(|(token, _)| normalized.contains(token))
+    {
+        styles.push(label);
     }
 
     for (token, label) in tokens {
@@ -1584,7 +2061,12 @@ fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_font_language, infer_language, validate_font_location_target};
+    use super::{
+        clean_family_name, detect_font_language, extract_font_names, infer_language,
+        is_generic_font_folder, pick_family_folder, pick_source_library, read_font_names,
+        scan_font_folder, validate_font_location_target, FontNames,
+    };
+    use std::collections::HashSet;
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -1613,6 +2095,157 @@ mod tests {
             ),
             "english"
         );
+    }
+
+    #[test]
+    fn treats_delivery_format_folders_as_technical_structure() {
+        for folder in [
+            "WEB",
+            "Variable",
+            "Static Fonts",
+            "NoirPro-Webfont",
+            "OpenType-PS",
+            "OpenType-TT",
+            "Variable-TT",
+            "Web-PS",
+            "Web-TT",
+        ] {
+            assert!(is_generic_font_folder(folder), "{folder} should be generic");
+        }
+    }
+
+    #[test]
+    fn reads_typographic_family_and_style_from_font_name_table() {
+        let family = utf16_be("Example Sans Cond");
+        let style = utf16_be("Bold Italic");
+        let strings_offset = 30_u16;
+        let table_length = strings_offset as usize + family.len() + style.len();
+        let mut bytes = vec![0_u8; 28 + table_length];
+
+        bytes[0..4].copy_from_slice(&[0x00, 0x01, 0x00, 0x00]);
+        write_u16(&mut bytes, 4, 1);
+        bytes[12..16].copy_from_slice(b"name");
+        write_u32(&mut bytes, 20, 28);
+        write_u32(&mut bytes, 24, table_length as u32);
+
+        let table_offset = 28;
+        write_u16(&mut bytes, table_offset, 0);
+        write_u16(&mut bytes, table_offset + 2, 2);
+        write_u16(&mut bytes, table_offset + 4, strings_offset);
+
+        write_name_record(
+            &mut bytes,
+            table_offset + 6,
+            16,
+            family.len() as u16,
+            0,
+        );
+        write_name_record(
+            &mut bytes,
+            table_offset + 18,
+            17,
+            style.len() as u16,
+            family.len() as u16,
+        );
+        let strings_start = table_offset + strings_offset as usize;
+        bytes[strings_start..strings_start + family.len()].copy_from_slice(&family);
+        bytes[strings_start + family.len()..strings_start + family.len() + style.len()]
+            .copy_from_slice(&style);
+
+        assert_eq!(
+            extract_font_names(&bytes),
+            Some(FontNames {
+                family: Some("Example Sans Cond".to_string()),
+                style: Some("Bold Italic".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn keeps_one_family_across_desktop_variable_and_web_folders() {
+        let desktop_path = ["Example Sans", "OpenType-TT"];
+        let web_path = ["Example Sans", "Web-TT"];
+
+        assert_eq!(
+            pick_family_folder(&desktop_path, "Font Library"),
+            "Example Sans"
+        );
+        assert_eq!(
+            pick_family_folder(&web_path, "Font Library"),
+            "Example Sans"
+        );
+        assert_eq!(
+            pick_source_library(&desktop_path, "Font Library"),
+            "Example Sans"
+        );
+        assert_eq!(
+            pick_source_library(&web_path, "Font Library"),
+            "Example Sans"
+        );
+    }
+
+    #[test]
+    fn derives_single_file_family_from_filename_inside_technical_folder() {
+        assert_eq!(
+            clean_family_name("OpenType-TT", "ExampleSans-Bold"),
+            "ExampleSans"
+        );
+        assert_eq!(
+            clean_family_name("Web-PS", "ExampleSans-Regular"),
+            "ExampleSans"
+        );
+        assert_eq!(
+            clean_family_name("RobotoSerif_120pt_ExtraExpanded", "RobotoSerif-Regular"),
+            "RobotoSerif"
+        );
+        assert_eq!(
+            clean_family_name("MonaSansSemiCondensed", "MonaSansSemiCondensed-Regular"),
+            "MonaSans"
+        );
+        assert_eq!(
+            clean_family_name("BodoniModa_72pt", "BodoniModa_72pt-Regular"),
+            "BodoniModa"
+        );
+    }
+
+    #[test]
+    fn scans_multi_format_package_as_one_family_identity() {
+        let parent = env::temp_dir().join(format!(
+            "yfonts-family-package-test-{}",
+            std::process::id()
+        ));
+        let root = parent.join("Example Sans");
+        let fixtures = [
+            ("OpenType-TT", "ExampleSans-Regular.ttf"),
+            ("OpenType-PS", "ExampleSans-Bold.otf"),
+            ("Variable-TT", "ExampleSans-VariableFont_wght.ttf"),
+            ("Web-TT", "ExampleSans-Regular.woff2"),
+        ];
+
+        for (folder, filename) in fixtures {
+            let directory = root.join(folder);
+            fs::create_dir_all(&directory).expect("create format directory");
+            fs::write(directory.join(filename), [0_u8; 4]).expect("write font fixture");
+        }
+
+        let index = scan_font_folder(root.to_string_lossy().to_string())
+            .expect("scan multi-format font package");
+        let families = index
+            .fonts
+            .iter()
+            .map(|font| font.family.as_str())
+            .collect::<HashSet<_>>();
+        let sources = index
+            .fonts
+            .iter()
+            .map(|font| font.source_library.as_str())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(index.total_fonts, 4);
+        assert_eq!(families, HashSet::from(["Example Sans"]));
+        assert_eq!(sources, HashSet::from(["Example Sans"]));
+
+        fs::remove_dir_all(parent).expect("remove family package test directory");
     }
 
     #[test]
@@ -1647,6 +2280,49 @@ mod tests {
             Some("english")
         );
     }
+
+    #[test]
+    fn reads_expected_family_from_real_font_when_path_is_provided() {
+        let Ok(font_path) = env::var("YFONTS_TEST_NAME_FONT") else {
+            return;
+        };
+        let Ok(expected_family) = env::var("YFONTS_TEST_EXPECTED_FAMILY") else {
+            return;
+        };
+
+        let names = read_font_names(Path::new(&font_path)).expect("read real font names");
+        assert_eq!(names.family.as_deref(), Some(expected_family.as_str()));
+    }
+
+    fn utf16_be(value: &str) -> Vec<u8> {
+        value
+            .encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<_>>()
+    }
+
+    fn write_name_record(
+        bytes: &mut [u8],
+        offset: usize,
+        name_id: u16,
+        length: u16,
+        string_offset: u16,
+    ) {
+        write_u16(bytes, offset, 3);
+        write_u16(bytes, offset + 2, 1);
+        write_u16(bytes, offset + 4, 0x0409);
+        write_u16(bytes, offset + 6, name_id);
+        write_u16(bytes, offset + 8, length);
+        write_u16(bytes, offset + 10, string_offset);
+    }
+
+    fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+    }
+
+    fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1658,9 +2334,11 @@ pub fn run() {
             pick_font_folder_path,
             open_font_location,
             diagnose_font_location,
+            open_external_url,
             detect_system_font,
             install_font_files,
             uninstall_font_files,
+            download_online_font_files,
             save_text_file,
             export_project_pack_bundle,
             read_app_data_file,

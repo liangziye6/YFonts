@@ -45,7 +45,7 @@ async function walk(folder) {
     const relative = path.relative(root, fullPath);
     const parts = relative.split(path.sep);
     const directoryParts = parts.slice(0, -1);
-    const library = directoryParts[0] || path.basename(root) || "Local";
+    const library = pickSourceLibrary(directoryParts, path.basename(root) || "Local");
     const category = inferCategory(directoryParts);
     const folderName = pickFamilyFolder(directoryParts, path.basename(root));
     const baseName = path.basename(entry.name, extension);
@@ -87,37 +87,114 @@ function pickFamilyFolder(directoryParts, rootName) {
     if (!isGenericFontFolder(folder) && !isBroadCategoryFolder(folder)) return folder;
   }
 
-  return rootName;
+  if (directoryParts.some(isBroadCategoryFolder)) return "";
+  return cleanRootFamilyLabel(rootName);
+}
+
+function cleanRootFamilyLabel(value) {
+  if (isGenericFontFolder(value) || isBroadCategoryFolder(value)) return "";
+  return value.replace(/[-_\s]+(?:main|master|release|source)$/i, "").trim();
 }
 
 function isGenericFontFolder(value) {
-  return /^(static|variable fonts?|webfonts?|fonts?|font files?|ttf|otf|woff2?|desktop)$/i.test(
-    value.trim()
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return /^(?:static(?:-fonts?)?|variable(?:-fonts?)?|web(?:-fonts?)?|webfonts?|.+-webfonts?|fonts?|font-files?|desktop|truetype|postscript|ttf|otf|woff2?|opentype(?:-(?:ps|tt))?|variable-(?:ps|tt)|web-(?:ps|tt))$/.test(
+    normalized
   );
 }
 
 function isBroadCategoryFolder(value) {
-  return /^(中文|英文|中文字体|英文字体|本地|local|黑体|宋体|楷体|圆体|隶书|篆体|手写|复古|创意|线体|衬线|无衬线|卡通|艺术|serif|sans|sans serif|script|display|decorative|handwriting)$/i.test(
+  if (
+    /^(中文|英文|中文字体|英文字体|本地|黑体|宋体|楷体|圆体|隶书|篆体|手写|手写体|复古|复古体|创意|创意体|线体|衬线|无衬线|卡通|卡通体|艺术|艺术体)$/i.test(
+      value.trim()
+    )
+  ) {
+    return true;
+  }
+  return /^(中文|英文|中文字体|英文字体|本地|local|黑体|宋体|楷体|圆体|隶书|篆体|手写|手写体|复古|复古体|创意|创意体|线体|衬线|无衬线|卡通|卡通体|艺术|艺术体|serif|sans|sans serif|script|display|decorative|handwriting)$/i.test(
     value.trim()
   );
 }
 
 function cleanFamilyName(folderName, baseName) {
-  const folder = folderName
-    .replace(/^\d+[-_\s]*/, "")
-    .replace(/_猫啃网|_字库星球|字体安装包|webfonts|static|variable fonts?/gi, "")
-    .trim();
+  const folderCandidate = cleanRootFamilyLabel(folderName);
+  const folder = stripFamilyInstanceSuffix(
+    (isGenericFontFolder(folderCandidate) ? "" : folderCandidate)
+      .replace(/^\d+[-_\s]*/, "")
+      .replace(/_猫啃网|_字库星球|字体安装包|webfonts|static|variable fonts?/gi, "")
+      .trim()
+  );
 
-  const base = baseName
-    .replace(/[-_](thin|extralight|extra-light|light|regular|medium|semibold|semi-bold|bold|extrabold|extra-bold|black|heavy|italic|oblique).*$/i, "")
-    .replace(/[-_]?variablefont.*$/i, "")
-    .trim();
+  const base = stripFamilyInstanceSuffix(
+    baseName
+      .replace(/[-_](thin|extralight|extra-light|light|regular|medium|semibold|semi-bold|bold|extrabold|extra-bold|black|heavy|italic|oblique).*$/i, "")
+      .replace(/[-_]?variablefont.*$/i, "")
+      .trim()
+  );
 
-  return folder.length >= 2 ? folder : base || baseName;
+  if (folder.length >= 2) {
+    const shouldUseBaseCasing =
+      folder.toLowerCase() === base.toLowerCase() &&
+      folder === folder.toLowerCase() &&
+      /[A-Z]/.test(base);
+    return shouldUseBaseCasing ? base : folder;
+  }
+  return base || baseName;
+}
+
+function stripFamilyInstanceSuffix(value) {
+  const withoutOpticalSize = value
+    .replace(/[-_\s]+\d+(?:pt|opsz)(?:[-_\s].*)?$/i, "")
+    .trim()
+    .replace(/[-_]+$/, "");
+  const lowered = withoutOpticalSize.toLowerCase();
+
+  for (const suffix of [
+    "ultracondensed",
+    "extracondensed",
+    "semicondensed",
+    "condensed",
+    "narrow",
+    "semiexpanded",
+    "extraexpanded",
+    "ultraexpanded",
+    "expanded",
+    "wide"
+  ]) {
+    if (!lowered.endsWith(suffix)) continue;
+    const start = withoutOpticalSize.length - suffix.length;
+    const previous = withoutOpticalSize[start - 1];
+    const first = withoutOpticalSize[start];
+    if (start === 0 || /[-_\s]/.test(previous) || /[A-Z]/.test(first)) {
+      return withoutOpticalSize.slice(0, start).replace(/[-_\s]+$/, "");
+    }
+  }
+
+  return withoutOpticalSize;
+}
+
+function pickSourceLibrary(directoryParts, rootName) {
+  return (
+    directoryParts.find(
+      (folder) => !isGenericFontFolder(folder) && !isBroadCategoryFolder(folder)
+    ) || rootName
+  );
 }
 
 function inferStyleName(name) {
   const normalized = name.toLowerCase();
+  const widthStyle = [
+    ["ultracondensed", "UltraCondensed"],
+    ["extracondensed", "ExtraCondensed"],
+    ["semicondensed", "SemiCondensed"],
+    ["condensed", "Condensed"],
+    ["narrow", "Narrow"],
+    ["semiexpanded", "SemiExpanded"],
+    ["extraexpanded", "ExtraExpanded"],
+    ["ultraexpanded", "UltraExpanded"],
+    ["expanded", "Expanded"],
+    ["wide", "Wide"]
+  ].find(([token]) => normalized.includes(token))?.[1];
   const styles = [
     ["thin", "Thin"],
     ["extralight", "ExtraLight"],
@@ -137,6 +214,7 @@ function inferStyleName(name) {
   ];
 
   const found = styles.filter(([token]) => normalized.includes(token)).map(([, label]) => label);
+  if (widthStyle) found.unshift(widthStyle);
   if (normalized.includes("variablefont") || normalized.includes("vf")) found.unshift("Variable");
   return found.length > 0 ? Array.from(new Set(found)).join(" / ") : "Regular";
 }

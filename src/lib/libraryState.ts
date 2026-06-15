@@ -1,4 +1,5 @@
-import type { FontAsset, LicenseKind, ProjectPack } from "../types";
+import { t } from "./i18n";
+import type { FontAsset, FontLanguage, LicenseKind, ProjectPack } from "../types";
 import { invokeTauri, isTauriRuntime } from "./tauri";
 
 const stateVersion = 1;
@@ -25,6 +26,7 @@ export type StoredLibraryState = {
 
 export type FontMetadataOverride = {
   category?: string;
+  language?: FontLanguage;
   license?: LicenseKind;
   licenseLabel?: string;
 };
@@ -78,12 +80,19 @@ export function applyLibraryState(fonts: FontAsset[], state?: StoredLibraryState
   if (!state) return fonts;
 
   const favoriteFontIds = new Set(state.favoriteFontIds);
-  return fonts.map((font) => ({
-    ...font,
-    ...state.fontOverrides[font.id],
-    status: state.installedFontFiles[font.id]?.length ? "installed" : font.status,
-    isFavorite: favoriteFontIds.has(font.id)
-  }));
+  return fonts.map((font) => {
+    const override = state.fontOverrides[font.id];
+    const language = override?.language ?? font.language;
+
+    return {
+      ...font,
+      ...override,
+      languageSupport: getLanguageSupport(language),
+      sampleText: getLanguageSample(language),
+      status: state.installedFontFiles[font.id]?.length ? "installed" : font.status,
+      isFavorite: favoriteFontIds.has(font.id)
+    };
+  });
 }
 
 export function loadSavedFolderRoots() {
@@ -362,6 +371,9 @@ function parseFontOverrides(value: unknown): Record<string, FontMetadataOverride
     if (typeof override.category === "string" && override.category.trim()) {
       nextOverride.category = override.category.trim();
     }
+    if (isFontLanguage(override.language)) {
+      nextOverride.language = override.language;
+    }
     if (isLicenseKind(override.license)) {
       nextOverride.license = override.license;
     }
@@ -389,6 +401,22 @@ function isLicenseKind(value: unknown): value is LicenseKind {
     value === "personal" ||
     value === "unknown"
   );
+}
+
+function isFontLanguage(value: unknown): value is FontLanguage {
+  return value === "chinese" || value === "english" || value === "mixed";
+}
+
+function getLanguageSupport(language: FontLanguage) {
+  if (language === "chinese") return [t.chinese, t.english, t.number];
+  if (language === "mixed") return [t.chinese, t.english, t.number];
+  return [t.english, t.number];
+}
+
+function getLanguageSample(language: FontLanguage) {
+  if (language === "chinese") return t.defaultPreview;
+  if (language === "mixed") return `${t.defaultPreview} / ${t.defaultSampleEn}`;
+  return t.defaultSampleEn;
 }
 
 function normalizeRootLabel(value: string) {

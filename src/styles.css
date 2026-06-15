@@ -471,10 +471,12 @@ button {
   align-content: start;
   gap: 5px;
   min-height: 0;
+  min-width: 0;
   margin-left: 13px;
   padding-left: 9px;
   border-left: 1px solid #dbe5f0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 2px;
 }
 
@@ -949,17 +951,25 @@ button {
 }
 
 .category-tabs {
+  grid-area: categories;
   display: flex;
+  align-items: center;
   flex-wrap: nowrap;
   gap: 6px;
   min-width: 0;
   height: 48px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 2px 0 6px;
+  padding: 4px 0;
   scrollbar-color: transparent transparent;
   scrollbar-width: thin;
   overscroll-behavior-inline: contain;
+}
+
+.category-tabs .tab {
+  flex-shrink: 0;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .category-tabs:hover {
@@ -986,18 +996,53 @@ button {
 .browser-tools {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 30px 124px;
+  grid-template-areas: "categories manage scale";
   align-items: center;
   gap: 12px;
   min-width: 0;
   overflow: hidden;
 }
 
+.browser-tools.online-tools {
+  grid-template-columns: minmax(0, 1fr) 124px;
+  grid-template-areas:
+    "categories categories"
+    "sources scale";
+  row-gap: 6px;
+}
+
+.browser-tools.online-tools .category-tabs {
+  width: 100%;
+  height: 40px;
+  gap: 4px;
+  padding-block: 2px 8px;
+}
+
+.browser-tools.online-tools .category-tabs .tab {
+  padding-inline: 8px;
+}
+
+.online-browser-header {
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+}
+
 .category-manage-button {
+  grid-area: manage;
   width: 30px;
   height: 30px;
+  color: #667386;
+  border-color: transparent;
+  background: transparent;
+}
+
+.category-manage-button:hover {
+  color: #1d4ed8;
+  border-color: transparent;
+  background: #edf4ff;
 }
 
 .preview-scale-control {
+  grid-area: scale;
   display: flex;
   align-items: center;
   justify-self: end;
@@ -1054,6 +1099,181 @@ button {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.online-source-strip {
+  grid-area: sources;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 34px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.online-source-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.online-source-chip {
+  display: inline-grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-width: max-content;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #dfe5ed;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #617086;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.online-source-chip:hover {
+  border-color: #a9c2ff;
+  background: #f7faff;
+  color: #2763df;
+}
+
+.online-source-chip.active {
+  border-color: #a9c2ff;
+  background: #f4f7ff;
+  color: #2763df;
+}
+
+.source-lettermark {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 5px;
+  background: currentColor;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  line-height: 1;
+}
+
+.online-source-chip span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 7px;
+  min-width: 0;
+}
+
+.online-source-chip strong,
+.online-source-chip em {
+  white-space: nowrap;
+}
+
+.online-offline-banner {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 7px 12px;
+  color: #7a4f00;
+  border-bottom: 1px solid #f2deb0;
+  background: #fff9e9;
+}
+
+.online-offline-banner div {
+  min-width: 0;
+}
+
+.online-offline-banner strong,
+.online-offline-banner span {
+  display: block;
+}
+
+.online-offline-banner strong {
+  font-size: 12px;
+}
+
+.online-offline-banner span {
+  margin-top: 2px;
+  color: #8d6c2b;
+  font-size: 10px;
+}
+
+.online-catalog-state {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  min-height: 320px;
+  padding: 32px;
+  color: #657185;
+  text-align: center;
+}
+
+.online-state-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  color: #69778b;
+  border: 1px solid #dce4ee;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.online-state-icon.loading svg {
+  animation: update-check-spin 0.9s linear infinite;
+}
+
+.online-catalog-state > strong {
+  color: #253147;
+  font-size: 15px;
+}
+
+.online-catalog-state > span {
+  max-width: 440px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.online-catalog-state > em {
+  max-width: 520px;
+  overflow: hidden;
+  color: #9b4c43;
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-catalog-state > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.online-catalog-state .command-button {
+  width: auto;
+  min-width: 132px;
+}
+
+.online-source-chip strong {
+  color: #243043;
+  font-size: 11px;
+}
+
+.online-source-chip em {
+  flex: 0 0 auto;
+  color: #7a8697;
+  font-size: 9px;
+  font-style: normal;
 }
 
 .bulk-summary {
@@ -1142,9 +1362,9 @@ button {
 }
 
 .tab.active {
-  color: #0f5132;
-  border-color: #9fd4b5;
-  background: #eaf8ef;
+  color: #1d4ed8;
+  border-color: #9bbcff;
+  background: #edf4ff;
 }
 
 .recent-strip {
@@ -2012,13 +2232,41 @@ button {
   font-style: normal;
 }
 
-.file-list {
+.file-groups {
   display: grid;
-  gap: 7px;
+  gap: 12px;
   max-height: 180px;
   overflow: auto;
   padding-right: 2px;
   scrollbar-width: thin;
+}
+
+.file-group {
+  display: grid;
+  gap: 7px;
+}
+
+.file-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  color: #5d6a7b;
+  font-size: 11px;
+}
+
+.file-group-head strong {
+  color: #344155;
+  font-size: 12px;
+}
+
+.file-group-head span {
+  color: #8792a2;
+}
+
+.file-list {
+  display: grid;
+  gap: 7px;
 }
 
 .file-item {
@@ -2193,6 +2441,10 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.detail-actions.online-actions .online-license-action {
+  grid-column: 1 / -1;
 }
 
 .project-panel {
@@ -3001,6 +3253,93 @@ button {
   line-height: 1.5;
 }
 
+.update-version-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  color: #536070;
+  border: 1px solid #d7e0eb;
+  border-radius: 7px;
+  background: #fbfcfe;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.app-update-card {
+  display: grid;
+  gap: 11px;
+  padding: 11px;
+  border: 1px solid #e5ebf2;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.app-update-card.update-available {
+  border-color: #b9cdfd;
+  background: #f5f8ff;
+}
+
+.app-update-status {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.app-update-status .status-dot {
+  background: #a5afbd;
+}
+
+.app-update-status .status-dot.update {
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+.app-update-status div {
+  min-width: 0;
+}
+
+.app-update-status strong,
+.app-update-status span {
+  display: block;
+}
+
+.app-update-status strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.app-update-status span {
+  margin-top: 3px;
+  color: #728197;
+  font-size: 11px;
+}
+
+.app-update-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-update-actions .command-button {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.update-check-spinner {
+  color: #7a8697;
+  animation: update-check-spin 0.9s linear infinite;
+}
+
+@keyframes update-check-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .library-stat-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3564,6 +3903,60 @@ button {
   background: #151516;
 }
 
+.app-shell.dark .online-source-chip strong {
+  color: #f4f4f5;
+}
+
+.app-shell.dark .online-source-chip em {
+  color: #8c8c92;
+}
+
+.app-shell.dark .online-source-chip {
+  border-color: #303034;
+  background: #1b1b1d;
+  color: #a8a8ae;
+}
+
+.app-shell.dark .online-source-chip:hover {
+  border-color: #55555c;
+  background: #202023;
+  color: #f4f4f5;
+}
+
+.app-shell.dark .online-source-chip.active {
+  border-color: #4c52a8;
+  background: #202137;
+  color: #8f95ff;
+}
+
+.app-shell.dark .online-offline-banner {
+  color: #e2c27d;
+  border-bottom-color: #3b3528;
+  background: #211f19;
+}
+
+.app-shell.dark .online-offline-banner span {
+  color: #a99a7c;
+}
+
+.app-shell.dark .online-catalog-state {
+  color: #92949c;
+}
+
+.app-shell.dark .online-state-icon {
+  color: #a4a7b0;
+  border-color: #303034;
+  background: #1b1b1d;
+}
+
+.app-shell.dark .online-catalog-state > strong {
+  color: #f1f1f3;
+}
+
+.app-shell.dark .online-catalog-state > em {
+  color: #d88d84;
+}
+
 .app-shell.dark .brand span,
 .app-shell.dark .browser-header span,
 .app-shell.dark .browser-header em,
@@ -3582,6 +3975,15 @@ button {
 .app-shell.dark .compare-note,
 .app-shell.dark .detail-note {
   color: #93969f;
+}
+
+.app-shell.dark .file-group-head,
+.app-shell.dark .file-group-head span {
+  color: #7f828b;
+}
+
+.app-shell.dark .file-group-head strong {
+  color: #c6c8cf;
 }
 
 .app-shell.dark .brand strong,
@@ -3913,6 +4315,18 @@ button {
   background: #5b5e68;
 }
 
+.app-shell.dark .category-manage-button {
+  color: #a7aab2;
+  border-color: transparent;
+  background: transparent;
+}
+
+.app-shell.dark .category-manage-button:hover {
+  color: #cbd1ff;
+  border-color: transparent;
+  background: #232326;
+}
+
 .app-shell.dark .library-drawer {
   color: #dedfe3;
   border-left-color: #29292d;
@@ -3928,6 +4342,8 @@ button {
 .app-shell.dark .drawer-close-button,
 .app-shell.dark .library-status-card,
 .app-shell.dark .drawer-section,
+.app-shell.dark .app-update-card,
+.app-shell.dark .update-version-chip,
 .app-shell.dark .library-stat-item,
 .app-shell.dark .source-item,
 .app-shell.dark .source-item dl div,
@@ -3942,6 +4358,11 @@ button {
   color: #dedfe3;
   border-color: #303034;
   background: #1e1e20;
+}
+
+.app-shell.dark .app-update-card.update-available {
+  border-color: #4a54be;
+  background: #1d1d24;
 }
 
 .app-shell.dark .library-drawer-head span,
@@ -3963,12 +4384,24 @@ button {
 
 .app-shell.dark .library-drawer-head strong,
 .app-shell.dark .library-status-title strong,
+.app-shell.dark .app-update-status strong,
 .app-shell.dark .library-stat-item strong,
 .app-shell.dark .source-item strong,
 .app-shell.dark .source-item dd,
 .app-shell.dark .duplicate-item strong,
 .app-shell.dark .platform-readiness strong {
   color: #f5f5f6;
+}
+
+.app-shell.dark .app-update-status span,
+.app-shell.dark .update-version-chip,
+.app-shell.dark .update-check-spinner {
+  color: #93969f;
+}
+
+.app-shell.dark .app-update-status .status-dot.update {
+  background: #6574ff;
+  box-shadow: 0 0 0 4px rgba(101, 116, 255, 0.13);
 }
 
 .app-shell.dark .drawer-close-button:hover,
@@ -4090,4 +4523,5 @@ button {
   .recent-strip {
     grid-template-columns: 1fr;
   }
+
 }

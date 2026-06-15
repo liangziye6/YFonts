@@ -23,6 +23,10 @@ export async function scanFontFolder(path: string): Promise<LocalFontIndex> {
     throw new Error(message || "Unable to scan folder");
   }
 
+  if (!response.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+    throw new Error("Folder scanning is only available in the desktop app");
+  }
+
   return (await response.json()) as LocalFontIndex;
 }
 

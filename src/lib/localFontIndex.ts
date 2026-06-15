@@ -30,11 +30,65 @@ export type LocalFontIndex = {
 const fontExtensions = new Set(["ttf", "otf", "ttc", "woff", "woff2"]);
 const previewableExtensions = new Set(["ttf", "otf", "woff", "woff2"]);
 const previewOrder = ["ttf", "otf", "woff2", "woff", "ttc"];
+const familyBranchTokens = new Set([
+  "arabic",
+  "latin",
+  "greek",
+  "cyrillic",
+  "global",
+  "international",
+  "simplified",
+  "traditional",
+  "sc",
+  "tc",
+  "cn",
+  "hk",
+  "tw",
+  "jp",
+  "kr",
+  "std",
+  "standard",
+  "pro",
+  "ui",
+  "text",
+  "display",
+  "headline",
+  "caption",
+  "compact",
+  "comp",
+  "exp",
+  "web",
+  "desktop",
+  "static",
+  "variable",
+  "vf",
+  "italic",
+  "oblique",
+  "upright",
+  "简体",
+  "繁体",
+  "中文",
+  "英文",
+  "国际版",
+  "标准版"
+]);
+const distinctFamilyClasses = new Set([
+  "sans",
+  "serif",
+  "mono",
+  "monospace",
+  "slab",
+  "script",
+  "symbols",
+  "symbol",
+  "emoji"
+]);
 
 export function localRecordsToAssets(
   index: LocalFontIndex,
   options: { source?: FontSource } = {}
 ): FontAsset[] {
+  const superfamilyLookup = createSuperfamilyLookup(index);
   const groups = new Map<
     string,
     {
@@ -50,7 +104,10 @@ export function localRecordsToAssets(
   for (const record of index.fonts) {
     const category = normalizeCategory(record);
     const libraryRoot = record.libraryRoot || index.root;
-    const key = [libraryRoot, record.sourceLibrary, category, normalizeKey(record.family)].join("|");
+    const family =
+      superfamilyLookup.get(getFamilyLookupKey(libraryRoot, category, record.family)) ??
+      getFamilyInstanceName(record.family);
+    const key = [libraryRoot, category, normalizeKey(family)].join("|");
     const existing = groups.get(key);
 
     if (existing) {
@@ -60,7 +117,7 @@ export function localRecordsToAssets(
 
     groups.set(key, {
       records: [record],
-      family: record.family,
+      family,
       category,
       sourceLibrary: record.sourceLibrary,
       libraryRoot,
@@ -81,9 +138,17 @@ export function localRecordsToAssets(
 }
 
 export async function loadLocalFontIndex(): Promise<LocalFontIndex | undefined> {
-  const response = await fetch("/font-index.json", { cache: "no-store" });
-  if (!response.ok) return undefined;
-  return (await response.json()) as LocalFontIndex;
+  try {
+    const response = await fetch("/font-index.json", {
+      cache: "no-store",
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok || !isJsonResponse(response)) return undefined;
+
+    return (await response.json()) as LocalFontIndex;
+  } catch {
+    return undefined;
+  }
 }
 
 export function countImportableFontFiles(files: File[]): number {
@@ -98,17 +163,19 @@ export function filesToLocalFontIndex(files: File[], rootLabel: string): LocalFo
       const extension = getFileExtension(file.name);
       const relativePath = getFileRelativePath(file);
       const parts = relativePath.split("/");
-      const category = parts.length > 2 ? parts[1] : t.local;
-      const folderName = parts.length > 2 ? parts[parts.length - 2] : "";
+      const directoryParts = parts.slice(0, -1);
+      const category = inferDirectoryCategory(directoryParts);
+      const folderName = pickFamilyFolder(directoryParts, rootLabel);
       const baseName = removeExtension(file.name);
+      const sourceLibrary = pickSourceLibrary(directoryParts, rootLabel);
 
       return {
         id: `import-${Date.now().toString(36)}-${index.toString(36)}`,
         family: cleanFamilyName(folderName, baseName),
         styleName: inferStyleName(baseName),
         category,
-        sourceLibrary: parts[0] || rootLabel,
-        language: inferLanguage(parts[0] || rootLabel, category, baseName),
+        sourceLibrary,
+        language: inferLanguage(sourceLibrary, category, baseName),
         path: relativePath,
         relativePath,
         libraryRoot: rootLabel,
@@ -196,7 +263,9 @@ function groupToAsset(
   _position: number,
   source: FontSource
 ): FontAsset {
-  const variants = group.records.map(recordToVariant).sort(sortVariants);
+  const variants = group.records
+    .map((record) => recordToVariant(record, group.family))
+    .sort(sortVariants);
   const activeVariant = variants.find((variant) => variant.isPreviewable) ?? variants[0];
   const weights = uniqueSorted(variants.map((variant) => variant.weight));
   const formats = uniqueSorted(variants.map((variant) => variant.format));
@@ -282,10 +351,17 @@ function inferVariableAxes(variants: FontVariant[]): FontAsset["variableAxes"] {
     .filter((axis): axis is NonNullable<typeof axis> => Boolean(axis));
 }
 
-function recordToVariant(record: LocalFontRecord): FontVariant {
+function recordToVariant(record: LocalFontRecord, superfamily: string): FontVariant {
+  const familyBranch = getFamilyBranchLabel(record.family, superfamily);
+  const styleName = familyBranch
+    ? [familyBranch, record.styleName]
+        .filter((value, index, values) => value && values.indexOf(value) === index)
+        .join(" / ")
+    : record.styleName;
+
   return {
     id: record.id,
-    styleName: record.styleName,
+    styleName,
     weight: record.weight,
     format: record.extension.toUpperCase(),
     extension: record.extension,
@@ -297,7 +373,7 @@ function recordToVariant(record: LocalFontRecord): FontVariant {
     fontUrl: record.fontUrl,
     fontFormat: record.fontFormat,
     isPreviewable: previewableExtensions.has(record.extension),
-    isItalic: /italic|oblique/i.test(record.styleName)
+    isItalic: /italic|oblique/i.test(`${record.family} ${record.styleName}`)
   };
 }
 
@@ -415,24 +491,279 @@ function summarizeVariants(variants: FontVariant[], weights: number[]): string {
 }
 
 function cleanFamilyName(folderName: string, baseName: string): string {
-  const folder = folderName
-    .replace(/^\d+[-_\s]*/, "")
-    .replace(/_猫啃网|_字库星球|字体安装包|webfonts|static|variable fonts?/gi, "")
-    .trim();
+  const folderCandidate = cleanRootFamilyLabel(folderName);
+  const folder = stripFamilyInstanceSuffix(
+    (isGenericFontFolder(folderCandidate) ? "" : folderCandidate)
+      .replace(/^\d+[-_\s]*/, "")
+      .replace(/_猫啃网|_字库星球|字体安装包|webfonts|static|variable fonts?/gi, "")
+      .trim()
+  );
 
-  const base = baseName
-    .replace(
-      /[-_](thin|extralight|extra-light|light|regular|medium|semibold|semi-bold|bold|extrabold|extra-bold|black|heavy|italic|oblique).*$/i,
-      ""
-    )
-    .replace(/[-_]?variablefont.*$/i, "")
-    .trim();
+  const base = stripFamilyInstanceSuffix(
+    baseName
+      .replace(
+        /[-_](thin|extralight|extra-light|light|regular|medium|semibold|semi-bold|bold|extrabold|extra-bold|black|heavy|italic|oblique).*$/i,
+        ""
+      )
+      .replace(/[-_]?variablefont.*$/i, "")
+      .trim()
+  );
 
-  return folder.length >= 2 ? folder : base || baseName;
+  if (folder.length >= 2) {
+    const shouldUseBaseCasing =
+      normalizeKey(folder) === normalizeKey(base) &&
+      folder === folder.toLowerCase() &&
+      /[A-Z]/.test(base);
+    return shouldUseBaseCasing ? base : folder;
+  }
+  return base || baseName;
+}
+
+function stripFamilyInstanceSuffix(value: string): string {
+  const withoutOpticalSize = value
+    .replace(/[-_\s]+\d+(?:pt|opsz)(?:[-_\s].*)?$/i, "")
+    .trim()
+    .replace(/[-_]+$/, "");
+  const lowered = withoutOpticalSize.toLowerCase();
+
+  for (const suffix of [
+    "ultracondensed",
+    "extracondensed",
+    "semicondensed",
+    "condensed",
+    "narrow",
+    "semiexpanded",
+    "extraexpanded",
+    "ultraexpanded",
+    "expanded",
+    "wide"
+  ]) {
+    if (!lowered.endsWith(suffix)) continue;
+    const start = withoutOpticalSize.length - suffix.length;
+    const previous = withoutOpticalSize[start - 1];
+    const first = withoutOpticalSize[start];
+    if (start === 0 || /[-_\s]/.test(previous) || /[A-Z]/.test(first)) {
+      return withoutOpticalSize.slice(0, start).replace(/[-_\s]+$/, "");
+    }
+  }
+
+  return withoutOpticalSize;
+}
+
+function getFamilyInstanceName(value: string): string {
+  let result = stripFamilyInstanceSuffix(value).trim();
+  const suffixPattern =
+    /(?:[-_\s]+)(?:italic|oblique|upright|comp(?:ressed)?|cond(?:ensed)?|narrow|semi[-_\s]?condensed|extra[-_\s]?condensed|ultra[-_\s]?condensed|expanded|extended|semi[-_\s]?expanded|extra[-_\s]?expanded|ultra[-_\s]?expanded|wide)$/i;
+
+  while (suffixPattern.test(result)) {
+    result = result.replace(suffixPattern, "").trim();
+  }
+
+  return result || value;
+}
+
+function createSuperfamilyLookup(index: LocalFontIndex): Map<string, string> {
+  const scopes = new Map<string, Map<string, string>>();
+
+  for (const record of index.fonts) {
+    const category = normalizeCategory(record);
+    const libraryRoot = record.libraryRoot || index.root;
+    const scopeKey = getFamilyScopeKey(libraryRoot, category);
+    const names = scopes.get(scopeKey) ?? new Map<string, string>();
+    const family = getFamilyInstanceName(record.family);
+    names.set(normalizeKey(family), family);
+    scopes.set(scopeKey, names);
+  }
+
+  const lookup = new Map<string, string>();
+
+  for (const [scopeKey, namesByKey] of scopes) {
+    const names = Array.from(namesByKey.values());
+    const inferredStemCounts = new Map<string, number>();
+    const resolvedNames = new Map<string, string>();
+
+    for (const name of names) {
+      const stem = stripFamilyBranchSuffix(name);
+      if (normalizeKey(stem) === normalizeKey(name) || !isMeaningfulFamilyStem(stem)) continue;
+      const stemKey = normalizeKey(stem);
+      inferredStemCounts.set(stemKey, (inferredStemCounts.get(stemKey) ?? 0) + 1);
+    }
+
+    const resolveFamily = (name: string, visited = new Set<string>()): string => {
+      const nameKey = normalizeKey(name);
+      const cached = resolvedNames.get(nameKey);
+      if (cached) return cached;
+      if (visited.has(nameKey)) return name;
+
+      const nextVisited = new Set(visited);
+      nextVisited.add(nameKey);
+      const existingParent = findLongestFamilyPrefix(name, names);
+      const inferredStem = stripFamilyBranchSuffix(name);
+      const inferredStemKey = normalizeKey(inferredStem);
+      const canUseInferredStem =
+        isMeaningfulFamilyStem(inferredStem) &&
+        normalizeKey(inferredStem) !== normalizeKey(name) &&
+        ((inferredStemCounts.get(inferredStemKey) ?? 0) > 1 ||
+          namesByKey.has(inferredStemKey));
+      const family = existingParent
+        ? resolveFamily(existingParent, nextVisited)
+        : canUseInferredStem
+          ? namesByKey.has(inferredStemKey)
+            ? resolveFamily(namesByKey.get(inferredStemKey)!, nextVisited)
+            : inferredStem
+          : name;
+
+      resolvedNames.set(nameKey, family);
+      return family;
+    };
+
+    for (const name of names) {
+      const family = resolveFamily(name);
+      lookup.set(`${scopeKey}|${normalizeKey(name)}`, family);
+    }
+  }
+
+  return lookup;
+}
+
+function getFamilyScopeKey(libraryRoot: string, category: string): string {
+  return `${normalizeKey(libraryRoot)}|${normalizeKey(category)}`;
+}
+
+function getFamilyLookupKey(libraryRoot: string, category: string, family: string): string {
+  return `${getFamilyScopeKey(libraryRoot, category)}|${normalizeKey(getFamilyInstanceName(family))}`;
+}
+
+function findLongestFamilyPrefix(family: string, families: string[]): string | undefined {
+  const familyTokens = tokenizeFamilyName(family);
+  const candidates = families
+    .filter((candidate) => normalizeKey(candidate) !== normalizeKey(family))
+    .map((candidate) => ({ candidate, tokens: tokenizeFamilyName(candidate) }))
+    .filter(({ candidate, tokens }) => {
+      if (!isMeaningfulFamilyStem(candidate) || tokens.length >= familyTokens.length) return false;
+      if (!tokens.every((token, index) => token.toLowerCase() === familyTokens[index]?.toLowerCase())) {
+        return false;
+      }
+
+      const branchTokens = familyTokens.slice(tokens.length);
+      return branchTokens.length > 0 && !isDistinctFamilyClass(branchTokens[0]);
+    })
+    .sort((left, right) => right.tokens.length - left.tokens.length);
+
+  return candidates[0]?.candidate;
+}
+
+function stripFamilyBranchSuffix(value: string): string {
+  const tokens = tokenizeFamilyName(value);
+  let end = tokens.length;
+
+  while (end > 1 && isFamilyBranchToken(tokens[end - 1])) {
+    end -= 1;
+  }
+
+  return end === tokens.length ? value : tokens.slice(0, end).join(" ");
+}
+
+function tokenizeFamilyName(value: string): string[] {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z0-9])([\u3400-\u9fff])/g, "$1 $2")
+    .replace(/([\u3400-\u9fff])([A-Za-z0-9])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .filter(Boolean);
+}
+
+function isFamilyBranchToken(value: string): boolean {
+  const token = value.toLowerCase();
+  return /^(?:l|level)?\d+$/.test(token) || familyBranchTokens.has(token);
+}
+
+function isDistinctFamilyClass(value: string): boolean {
+  return distinctFamilyClasses.has(value.toLowerCase());
+}
+
+function isMeaningfulFamilyStem(value: string): boolean {
+  const compact = value.replace(/[\s._-]+/g, "");
+  const cjkCount = (compact.match(/[\u3400-\u9fff]/g) ?? []).length;
+  return cjkCount >= 2 || compact.replace(/[^a-z0-9]/gi, "").length >= 4;
+}
+
+function getFamilyBranchLabel(family: string, superfamily: string): string {
+  if (normalizeKey(family) === normalizeKey(superfamily)) return "";
+  const familyTokens = tokenizeFamilyName(family);
+  const superfamilyTokens = tokenizeFamilyName(superfamily);
+  const sharesPrefix = superfamilyTokens.every(
+    (token, index) => token.toLowerCase() === familyTokens[index]?.toLowerCase()
+  );
+  const branch = sharesPrefix
+    ? familyTokens.slice(superfamilyTokens.length).join(" ")
+    : family.slice(superfamily.length).replace(/^[-_\s]+/, "").trim();
+
+  return branch.replace(/(?:[-_\s]+)?(?:italic|oblique|upright)$/i, "").trim();
+}
+
+function inferDirectoryCategory(directoryParts: string[]): string {
+  for (let index = directoryParts.length - 1; index >= 0; index -= 1) {
+    if (isBroadCategoryFolder(directoryParts[index])) return directoryParts[index];
+  }
+  return t.local;
+}
+
+function pickFamilyFolder(directoryParts: string[], rootLabel: string): string {
+  for (let index = directoryParts.length - 1; index >= 0; index -= 1) {
+    const folder = directoryParts[index];
+    if (!isGenericFontFolder(folder) && !isBroadCategoryFolder(folder)) return folder;
+  }
+  if (directoryParts.some(isBroadCategoryFolder)) return "";
+  return cleanRootFamilyLabel(rootLabel);
+}
+
+function cleanRootFamilyLabel(value: string): string {
+  if (isGenericFontFolder(value) || isBroadCategoryFolder(value)) return "";
+  return value.replace(/[-_\s]+(?:main|master|release|source)$/i, "").trim();
+}
+
+function pickSourceLibrary(directoryParts: string[], rootLabel: string): string {
+  return (
+    directoryParts.find(
+      (folder) => !isGenericFontFolder(folder) && !isBroadCategoryFolder(folder)
+    ) ?? rootLabel
+  );
+}
+
+function isGenericFontFolder(value: string): boolean {
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return /^(?:static(?:-fonts?)?|variable(?:-fonts?)?|web(?:-fonts?)?|webfonts?|.+-webfonts?|fonts?|font-files?|desktop|truetype|postscript|ttf|otf|woff2?|opentype(?:-(?:ps|tt))?|variable-(?:ps|tt)|web-(?:ps|tt))$/.test(
+    normalized
+  );
+}
+
+function isBroadCategoryFolder(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return /^(?:chinese|english|中文|英文|中文字体|英文字体|本地|local|黑体|宋体|楷体|圆体|隶书|篆体|手写|手写体|复古|复古体|创意|创意体|线体|衬线|无衬线|卡通|卡通体|艺术|艺术体|serif|sans|sans serif|script|display|decorative|handwriting)$/.test(
+    normalized
+  );
 }
 
 function inferStyleName(name: string): string {
   const normalized = name.toLowerCase();
+  const widthStyle = [
+    ["ultracondensed", "UltraCondensed"],
+    ["extracondensed", "ExtraCondensed"],
+    ["semicondensed", "SemiCondensed"],
+    ["condensed", "Condensed"],
+    ["narrow", "Narrow"],
+    ["semiexpanded", "SemiExpanded"],
+    ["extraexpanded", "ExtraExpanded"],
+    ["ultraexpanded", "UltraExpanded"],
+    ["expanded", "Expanded"],
+    ["wide", "Wide"]
+  ].find(([token]) => normalized.includes(token))?.[1];
   const styles = [
     ["thin", "Thin"],
     ["extralight", "ExtraLight"],
@@ -452,6 +783,7 @@ function inferStyleName(name: string): string {
   ];
 
   const found = styles.filter(([token]) => normalized.includes(token)).map(([, label]) => label);
+  if (widthStyle) found.unshift(widthStyle);
   if (normalized.includes("variablefont") || normalized.includes("vf")) found.unshift("Variable");
   return found.length > 0 ? Array.from(new Set(found)).join(" / ") : "Regular";
 }
@@ -553,4 +885,8 @@ function getFileRelativePath(file: File): string {
 function removeExtension(fileName: string): string {
   const dotIndex = fileName.lastIndexOf(".");
   return dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
+}
+
+function isJsonResponse(response: Response) {
+  return response.headers.get("content-type")?.toLowerCase().includes("application/json") ?? false;
 }

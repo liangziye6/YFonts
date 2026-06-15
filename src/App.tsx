@@ -7,9 +7,20 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent
 } from "react";
-import { GripVertical, Pencil, Plus, Tags, Trash2, X } from "lucide-react";
+import {
+  ArrowLeft,
+  GripVertical,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Tags,
+  Trash2,
+  WifiOff,
+  X
+} from "lucide-react";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { FontList } from "./components/FontList";
+import { OnlineSourceBar } from "./components/OnlineSourceBar";
 import {
   LibrarySettingsPanel,
   type LibraryDuplicateGroup,
@@ -24,7 +35,13 @@ import {
   type SourceFilter
 } from "./components/TopBar";
 import { WindowTitleBar } from "./components/WindowTitleBar";
+import { openExternalUrl } from "./lib/appUpdate";
 import { getLicenseMetadataLabel, licenseMetadataOptions } from "./lib/fontMetadata";
+import {
+  isOnlineFont,
+  loadFontsourceCatalog,
+  loadFontsourceDetails
+} from "./lib/fontsource";
 import { t } from "./lib/i18n";
 import {
   countImportableFontFiles,
@@ -61,7 +78,14 @@ import {
 import { pickNativeFontFiles, scanFontFolder } from "./lib/scanFontFolder";
 import { getFontSearchScore } from "./lib/fontSearch";
 import { invokeTauri, isTauriRuntime } from "./lib/tauri";
-import type { FontAsset, FontSource, FontVariant, LicenseKind, ProjectPack } from "./types";
+import type {
+  FontAsset,
+  FontLanguage,
+  FontSource,
+  FontVariant,
+  LicenseKind,
+  ProjectPack
+} from "./types";
 
 const freeLicenses = new Set(["ofl", "free-commercial", "apache", "cc0"]);
 const detailFontFamily = "YFonts Detail Preview";
@@ -101,6 +125,19 @@ type SystemFontDetectionResult = {
 };
 
 type SystemFontStatus = "checking" | "installed" | "not-installed" | "unavailable";
+type OnlineCatalogStatus = "idle" | "loading" | "loaded" | "error";
+
+type OnlineFontDownloadResult = {
+  status: "picked" | "cancelled";
+  targetDir?: string;
+  paths: string[];
+  failedFiles: number;
+};
+
+type OnlineFontDownloadOptions = {
+  scope?: "variant" | "family";
+  installAfterDownload?: boolean;
+};
 
 function getFontFaceWeightDescriptor(font: FontAsset, variant: FontVariant) {
   const weightAxis = isVariableFontVariant(variant)
@@ -152,6 +189,10 @@ function App() {
   const [removedFontIds, setRemovedFontIds] = useState<Set<string>>(new Set());
   const [selectedFontIds, setSelectedFontIds] = useState<Set<string>>(new Set());
   const [visibleListFontIds, setVisibleListFontIds] = useState<string[]>([]);
+  const [fontListScrollTarget, setFontListScrollTarget] = useState<{
+    fontId: string;
+    requestId: number;
+  }>();
   const [fontAxisValues, setFontAxisValues] = useState<Record<string, FontAxisValues>>({});
   const [libraryKey, setLibraryKey] = useState(sampleLibraryKey);
   const [isLibraryStateReady, setIsLibraryStateReady] = useState(false);
@@ -168,6 +209,14 @@ function App() {
   const [selectedProjectPackId, setSelectedProjectPackId] = useState<string>();
   const [systemFontBusyId, setSystemFontBusyId] = useState<string>();
   const [systemFontStatuses, setSystemFontStatuses] = useState<Record<string, SystemFontStatus>>({});
+  const [onlineCatalogStatus, setOnlineCatalogStatus] =
+    useState<OnlineCatalogStatus>("idle");
+  const [onlineCatalogError, setOnlineCatalogError] = useState("");
+  const [isNetworkOnline, setIsNetworkOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine
+  );
+  const [onlineDetailBusyId, setOnlineDetailBusyId] = useState<string>();
+  const [onlineDownloadBusyId, setOnlineDownloadBusyId] = useState<string>();
   const [notice, setNotice] = useState("");
 
   const platform = platformProfiles[detectPlatform()];
@@ -185,23 +234,98 @@ function App() {
     window.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
 
+  useEffect(() => {
+    function handleOnline() {
+      setIsNetworkOnline(true);
+      setOnlineCatalogError("");
+      setOnlineCatalogStatus((status) =>
+        activeSection === "online" && status === "error" ? "idle" : status
+      );
+    }
+
+    function handleOffline() {
+      setIsNetworkOnline(false);
+      if (activeSection === "online") setNotice(t.onlineOfflineNotice);
+    }
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [activeSection]);
+
+  useEffect(() => {
+    if (activeSection !== "online" || onlineCatalogStatus !== "idle") return;
+
+    let cancelled = false;
+    setOnlineCatalogStatus("loading");
+    setOnlineCatalogError("");
+    setNotice(isNetworkOnline ? t.onlineCatalogLoading : t.onlineOfflineNotice);
+
+    void loadFontsourceCatalog({ allowStaleCache: !isNetworkOnline })
+      .then(async (onlineFonts) => {
+        if (cancelled) return;
+        const savedState = await loadLibraryStateAsync(libraryKey);
+        const hydratedOnlineFonts = applyLibraryState(onlineFonts, savedState);
+        setFonts((currentFonts) => mergeFontAssets(currentFonts, hydratedOnlineFonts));
+        setOnlineCatalogStatus("loaded");
+        setOnlineCatalogError("");
+        setNotice(
+          isNetworkOnline
+            ? `${t.onlineCatalogLoaded}: ${onlineFonts.length} ${t.fontsUnit}`
+            : t.onlineOfflineCachedTitle
+        );
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setOnlineCatalogStatus("error");
+        const message = isNetworkOnline ? getErrorMessage(error) : t.onlineOfflineHint;
+        setOnlineCatalogError(message);
+        setNotice(
+          isNetworkOnline ? `${t.onlineCatalogFailed}: ${message}` : t.onlineOfflineNotice
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, isNetworkOnline, libraryKey, onlineCatalogStatus]);
+
   const managedFonts = useMemo(
     () => fonts.filter((font) => !removedFontIds.has(font.id)),
     [fonts, removedFontIds]
   );
 
-  const visibleFonts = useMemo(
-    () => managedFonts.filter((font) => !hiddenFontIds.has(font.id)),
-    [hiddenFontIds, managedFonts]
+  const managedLocalFonts = useMemo(
+    () => managedFonts.filter((font) => !isOnlineFont(font)),
+    [managedFonts]
+  );
+
+  const managedOnlineFonts = useMemo(
+    () => managedFonts.filter((font) => isOnlineFont(font)),
+    [managedFonts]
+  );
+
+  const visibleLocalFonts = useMemo(
+    () => managedLocalFonts.filter((font) => !hiddenFontIds.has(font.id)),
+    [hiddenFontIds, managedLocalFonts]
+  );
+
+  const visibleOnlineFonts = useMemo(
+    () => managedOnlineFonts.filter((font) => !hiddenFontIds.has(font.id)),
+    [hiddenFontIds, managedOnlineFonts]
   );
 
   const hiddenFonts = useMemo(
-    () => managedFonts.filter((font) => hiddenFontIds.has(font.id)),
-    [hiddenFontIds, managedFonts]
+    () => managedLocalFonts.filter((font) => hiddenFontIds.has(font.id)),
+    [hiddenFontIds, managedLocalFonts]
   );
 
   const removedFonts = useMemo(
-    () => fonts.filter((font) => removedFontIds.has(font.id)),
+    () => fonts.filter((font) => !isOnlineFont(font) && removedFontIds.has(font.id)),
     [fonts, removedFontIds]
   );
 
@@ -210,8 +334,8 @@ function App() {
 
   const projectPackFonts = useMemo(() => {
     const packFontIds = getProjectPackFontIds(projectPacks, selectedProjectPack?.id);
-    return visibleFonts.filter((font) => packFontIds.has(font.id));
-  }, [projectPacks, selectedProjectPack, visibleFonts]);
+    return visibleLocalFonts.filter((font) => packFontIds.has(font.id));
+  }, [projectPacks, selectedProjectPack, visibleLocalFonts]);
 
   const sectionBaseFonts =
     activeSection === "projectPacks"
@@ -220,38 +344,45 @@ function App() {
       ? hiddenFonts
       : activeSection === "removed"
         ? removedFonts
-        : visibleFonts;
+        : activeSection === "online"
+          ? visibleOnlineFonts
+          : visibleLocalFonts;
 
   const categories = useMemo(() => {
-    const nextCategories = uniqueStrings([
-      ...categoryLabels,
-      ...sectionBaseFonts.map((font) => font.category)
-    ]);
+    const sectionCategories = uniqueStrings(sectionBaseFonts.map((font) => font.category));
+    const nextCategories =
+      activeSection === "online"
+        ? uniqueStrings([
+            ...categoryLabels.filter((label) => sectionCategories.includes(label)),
+            ...sectionCategories
+          ])
+        : uniqueStrings([...categoryLabels, ...sectionCategories]);
     return [t.all, ...nextCategories];
-  }, [categoryLabels, sectionBaseFonts]);
+  }, [activeSection, categoryLabels, sectionBaseFonts]);
 
   const metadataCategories = useMemo(() => {
     return uniqueStrings([...categoryLabels, ...fonts.map((font) => font.category)]);
   }, [categoryLabels, fonts]);
 
   const counts = useMemo(() => {
-    const sectionIds: SectionId[] = ["all", "local", "online", "free", "review", "favorites"];
-
-    const visibleCounts = sectionIds.reduce(
-      (result, sectionId) => ({
-        ...result,
-        [sectionId]: visibleFonts.filter((font) => getSectionMatch(sectionId, font)).length
-      }),
-      {} as Record<SectionId, number>
-    );
-
     return {
-      ...visibleCounts,
+      all: visibleLocalFonts.length,
+      local: visibleLocalFonts.filter((font) => getSectionMatch("local", font)).length,
+      online: visibleOnlineFonts.length,
+      free: visibleLocalFonts.filter((font) => getSectionMatch("free", font)).length,
+      review: visibleLocalFonts.filter((font) => getSectionMatch("review", font)).length,
+      favorites: visibleLocalFonts.filter((font) => getSectionMatch("favorites", font)).length,
       projectPacks: projectPacks.filter((pack) => !pack.parentId).length,
       hidden: hiddenFonts.length,
       removed: removedFonts.length
     };
-  }, [hiddenFonts.length, projectPacks.length, removedFonts.length, visibleFonts]);
+  }, [
+    hiddenFonts.length,
+    projectPacks,
+    removedFonts.length,
+    visibleLocalFonts,
+    visibleOnlineFonts.length
+  ]);
 
   const filteredFonts = useMemo(() => {
     const hasQuery = query.trim().length > 0;
@@ -289,7 +420,7 @@ function App() {
   }, [activeSection, category, languageFilter, licenseFilter, query, sectionBaseFonts, sourceFilter]);
 
   const selectedFont =
-    (selectedId ? fonts.find((font) => font.id === selectedId) : undefined) ??
+    (selectedId ? filteredFonts.find((font) => font.id === selectedId) : undefined) ??
     (isBrowserImportPreviewSafeMode ? undefined : filteredFonts[0]);
   const selectedVariantId = selectedFont ? activeVariantIds[selectedFont.id] : undefined;
   const selectedDetailFontFamily = useMemo(() => {
@@ -312,25 +443,27 @@ function App() {
   );
 
   const licenseOverview = useMemo(() => {
-    const freeCount = visibleFonts.filter((font) => freeLicenses.has(font.license)).length;
-    const reviewCount = visibleFonts.filter(
+    const overviewFonts = activeSection === "online" ? visibleOnlineFonts : visibleLocalFonts;
+    const freeCount = overviewFonts.filter((font) => freeLicenses.has(font.license)).length;
+    const reviewCount = overviewFonts.filter(
       (font) => font.license === "unknown" || font.license === "personal"
     ).length;
 
     return {
       freeCount,
       reviewCount,
-      totalCount: visibleFonts.length
+      totalCount: overviewFonts.length
     };
-  }, [visibleFonts]);
+  }, [activeSection, visibleLocalFonts, visibleOnlineFonts]);
 
   const recentFonts = useMemo(() => {
-    const fontsById = new Map(visibleFonts.map((font) => [font.id, font]));
+    const recentPool = activeSection === "online" ? visibleOnlineFonts : visibleLocalFonts;
+    const fontsById = new Map(recentPool.map((font) => [font.id, font]));
     const historyFonts = recentFontIds.map((fontId) => fontsById.get(fontId));
-    const favoriteFonts = visibleFonts.filter((font) => font.isFavorite);
+    const favoriteFonts = recentPool.filter((font) => font.isFavorite);
 
     return uniqueFonts([...historyFonts, ...favoriteFonts, ...filteredFonts]).slice(0, 6);
-  }, [filteredFonts, recentFontIds, visibleFonts]);
+  }, [activeSection, filteredFonts, recentFontIds, visibleLocalFonts, visibleOnlineFonts]);
 
   const fontFaceFonts = useMemo(
     () => {
@@ -356,30 +489,44 @@ function App() {
     ]
   );
 
-  const totalFontFiles = useMemo(
-    () => fonts.reduce((total, font) => total + font.totalFiles, 0),
-    [fonts]
+  const localFontFiles = useMemo(
+    () => managedLocalFonts.reduce((total, font) => total + font.totalFiles, 0),
+    [managedLocalFonts]
+  );
+
+  const onlineFontFiles = useMemo(
+    () => managedOnlineFonts.reduce((total, font) => total + font.totalFiles, 0),
+    [managedOnlineFonts]
   );
 
   const libraryStats: LibrarySettingsStats = useMemo(
     () => ({
-      families: fonts.length,
-      files: totalFontFiles,
-      visible: visibleFonts.length,
+      families: managedLocalFonts.length,
+      files: localFontFiles,
+      visible: visibleLocalFonts.length,
       hidden: hiddenFonts.length,
       removed: removedFonts.length,
-      favorites: fonts.filter((font) => font.isFavorite).length,
-      previewable: fonts.filter((font) => font.canPreview).length,
-      desktopOnly: fonts.filter((font) => !font.canPreview).length,
-      categories: new Set(fonts.map((font) => font.category)).size
+      favorites: managedLocalFonts.filter((font) => font.isFavorite).length,
+      previewable: managedLocalFonts.filter((font) => font.canPreview).length,
+      desktopOnly: managedLocalFonts.filter((font) => !font.canPreview).length,
+      categories: new Set(managedLocalFonts.map((font) => font.category)).size
     }),
-    [fonts, hiddenFonts.length, removedFonts.length, totalFontFiles, visibleFonts.length]
+    [
+      hiddenFonts.length,
+      localFontFiles,
+      managedLocalFonts,
+      removedFonts.length,
+      visibleLocalFonts.length
+    ]
   );
 
-  const librarySources = useMemo(() => summarizeLibrarySources(fonts), [fonts]);
+  const librarySources = useMemo(
+    () => summarizeLibrarySources(managedLocalFonts),
+    [managedLocalFonts]
+  );
   const libraryDuplicateGroups = useMemo(
-    () => summarizeDuplicateGroups(visibleFonts),
-    [visibleFonts]
+    () => summarizeDuplicateGroups(visibleLocalFonts),
+    [visibleLocalFonts]
   );
 
   useEffect(() => {
@@ -466,6 +613,13 @@ function App() {
       }));
       return;
     }
+    if (isOnlineFont(selectedFont) && selectedFont.status === "indexed") {
+      setSystemFontStatuses((currentStatuses) => ({
+        ...currentStatuses,
+        [fontId]: "unavailable"
+      }));
+      return;
+    }
     if (!isTauriRuntime()) {
       setSystemFontStatuses((currentStatuses) => ({
         ...currentStatuses,
@@ -506,6 +660,48 @@ function App() {
       cancelled = true;
     };
   }, [installedFontFiles, selectedFont?.id]);
+
+  useEffect(() => {
+    if (
+      !selectedFont?.remoteId ||
+      selectedFont.remoteDetailsLoaded ||
+      onlineDetailBusyId === selectedFont.id ||
+      !isNetworkOnline
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const fontId = selectedFont.id;
+    setOnlineDetailBusyId(fontId);
+
+    void loadFontsourceDetails(selectedFont)
+      .then((detailedFont) => {
+        if (cancelled) return;
+        setFonts((currentFonts) =>
+          currentFonts.map((font) =>
+            font.id === fontId
+              ? {
+                  ...detailedFont,
+                  isFavorite: font.isFavorite,
+                  status: font.status,
+                  libraryRoot: font.libraryRoot
+                }
+              : font
+          )
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) setNotice(`${t.onlineCatalogFailed}: ${getErrorMessage(error)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setOnlineDetailBusyId(undefined);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isNetworkOnline, selectedFont?.id, selectedFont?.remoteDetailsLoaded]);
 
   useEffect(() => {
     if (!isLibraryStateReady) return;
@@ -621,7 +817,8 @@ function App() {
     setSystemFontStatuses({});
     setCategoryLabels(
       uniqueStrings([
-        ...(savedState?.categoryLabels?.length ? savedState.categoryLabels : builtInCategories),
+        ...builtInCategories,
+        ...(savedState?.categoryLabels ?? []),
         ...hydratedFonts.map((font) => font.category)
       ])
     );
@@ -645,7 +842,10 @@ function App() {
     }
 
     const index = await loadLocalFontIndex();
-    if (!index) return;
+    if (!index) {
+      await restoreSavedFolderImports();
+      return;
+    }
 
     const localAssets = localRecordsToAssets(index);
     if (localAssets.length === 0) return;
@@ -967,6 +1167,28 @@ function App() {
     setSelectedId(fontId);
   }
 
+  function selectRecentFont(fontId: string) {
+    const font = fonts.find((candidate) => candidate.id === fontId);
+    const canKeepCurrentSection =
+      font &&
+      activeSection !== "projectPacks" &&
+      activeSection !== "hidden" &&
+      activeSection !== "removed" &&
+      getSectionMatch(activeSection, font);
+
+    if (!canKeepCurrentSection) setActiveSection("all");
+    setCategory(t.all);
+    setLicenseFilter("all");
+    setSourceFilter("all");
+    setLanguageFilter("all");
+    setSelectedFontIds(new Set());
+    setSelectedId(fontId);
+    setFontListScrollTarget((current) => ({
+      fontId,
+      requestId: (current?.requestId ?? 0) + 1
+    }));
+  }
+
   function toggleFontSelection(fontId: string) {
     setSelectedFontIds((currentIds) => {
       const nextIds = new Set(currentIds);
@@ -1127,9 +1349,13 @@ function App() {
   function updateFontMetadata(fontId: string, patch: FontMetadataOverride) {
     if (patch.category) {
       setCategoryLabels((currentLabels) => uniqueStrings([...currentLabels, patch.category!]));
+      if (category !== t.all) setCategory(patch.category);
     }
+    if (patch.language && languageFilter !== "all") setLanguageFilter(patch.language);
     setFonts((currentFonts) =>
-      currentFonts.map((font) => (font.id === fontId ? { ...font, ...patch } : font))
+      currentFonts.map((font) =>
+        font.id === fontId ? applyFontMetadataPatch(font, patch) : font
+      )
     );
     setFontOverrides((currentOverrides) => ({
       ...currentOverrides,
@@ -1139,6 +1365,175 @@ function App() {
       }
     }));
     setNotice(t.metadataUpdated);
+  }
+
+  async function downloadOnlineFont(
+    fontId: string,
+    options: OnlineFontDownloadOptions = {}
+  ) {
+    if (!isNetworkOnline) {
+      setNotice(t.onlineOfflineDownloadHint);
+      return;
+    }
+
+    const scope = options.scope ?? "variant";
+    const installAfterDownload = options.installAfterDownload ?? false;
+    let font = fonts.find((candidate) => candidate.id === fontId);
+    if (!font || !isOnlineFont(font)) return;
+
+    if (scope === "family" && !isTauriRuntime()) {
+      setNotice(t.desktopInstallOnly);
+      return;
+    }
+
+    setOnlineDownloadBusyId(fontId);
+
+    try {
+      if (!font.remoteDetailsLoaded) {
+        setOnlineDetailBusyId(fontId);
+        font = await loadFontsourceDetails(font);
+        setFonts((currentFonts) =>
+          currentFonts.map((currentFont) =>
+            currentFont.id === fontId ? preserveFontState(currentFont, font!) : currentFont
+          )
+        );
+      }
+
+      const activeVariant = getActiveVariant(font, activeVariantIds[fontId]);
+      const downloadVariants =
+        scope === "family"
+          ? uniqueOnlineDownloadVariants(font.variants)
+          : [activeVariant];
+      const files = downloadVariants
+        .map((variant) => ({
+          variant,
+          url: variant.downloadUrl ?? variant.path ?? "",
+          filename: getOnlineFontFilename(font!, variant)
+        }))
+        .filter(({ url }) => url.startsWith("https://cdn.jsdelivr.net/fontsource/fonts/"));
+
+      if (files.length === 0) {
+        setNotice(t.onlineFontDownloadFailed);
+        return;
+      }
+
+      setNotice(
+        `${t.downloadingOnlineFont}: ${font.family} / ${files.length} ${t.fileCount}`
+      );
+
+      if (!isTauriRuntime()) {
+        const file = files[0];
+        await downloadRemoteFileInBrowser(file.url, file.filename);
+        setNotice(`${t.onlineFontDownloaded}: ${file.filename}`);
+        return;
+      }
+
+      const result = await invokeTauri<OnlineFontDownloadResult>("download_online_font_files", {
+        family: font.family,
+        files: files.map(({ url, filename }) => ({ url, filename }))
+      });
+      if (result.status === "cancelled") {
+        setNotice(t.onlineDownloadCancelled);
+        return;
+      }
+      if (result.paths.length === 0 || !result.targetDir) {
+        setNotice(t.onlineFontDownloadFailed);
+        return;
+      }
+
+      setFonts((currentFonts) =>
+        currentFonts.map((currentFont) =>
+          currentFont.id === fontId
+            ? {
+                ...currentFont,
+                status: "downloaded",
+                libraryRoot: result.targetDir
+              }
+            : currentFont
+        )
+      );
+
+      let localAssets: FontAsset[] = [];
+      let indexError: string | undefined;
+      try {
+        const downloadedIndex = await scanFontFolder(result.targetDir);
+        localAssets = localRecordsToAssets(downloadedIndex, { source: "local" });
+        if (localAssets.length > 0) {
+          addAssetsToLibrary(downloadedIndex, localAssets, {
+            persistRoot: true,
+            selectFirst: true
+          });
+          setActiveSection("local");
+          setSourceFilter("all");
+        }
+      } catch (error) {
+        indexError = getErrorMessage(error);
+      }
+
+      if (installAfterDownload) {
+        const installResult = await invokeTauri<FontSystemOperationResult>("install_font_files", {
+          paths: result.paths
+        });
+        const localFontId =
+          localAssets.find(
+            (asset) => normalizeFontFamily(asset.family) === normalizeFontFamily(font!.family)
+          )?.id ?? fontId;
+        setInstalledFontFiles((currentFiles) => ({
+          ...currentFiles,
+          [fontId]: installResult.paths,
+          [localFontId]: installResult.paths
+        }));
+        setSystemFontStatuses((currentStatuses) => ({
+          ...currentStatuses,
+          [fontId]: "installed",
+          [localFontId]: "installed"
+        }));
+        setFonts((currentFonts) =>
+          currentFonts.map((currentFont) =>
+            currentFont.id === fontId || currentFont.id === localFontId
+              ? { ...currentFont, status: "installed" }
+              : currentFont
+          )
+        );
+      }
+
+      const failedText =
+        result.failedFiles > 0
+          ? ` / ${t.onlineDownloadPartial}: ${result.failedFiles} ${t.fileCount}`
+          : "";
+      const indexText = indexError
+        ? ` / ${t.folderScanFailed}: ${indexError}`
+        : localAssets.length > 0
+          ? ` / ${localAssets.length} ${t.fontsUnit}`
+          : "";
+      const completedLabel = installAfterDownload
+        ? t.fontInstalled
+        : scope === "family"
+          ? t.onlineFamilyDownloaded
+          : t.onlineFontAddedToLibrary;
+      setNotice(
+        `${completedLabel}: ${result.paths.length} ${t.fileCount}${indexText}${failedText}`
+      );
+    } catch (error) {
+      setNotice(`${t.onlineFontDownloadFailed}: ${getErrorMessage(error)}`);
+    } finally {
+      setOnlineDetailBusyId((currentId) => (currentId === fontId ? undefined : currentId));
+      setOnlineDownloadBusyId(undefined);
+    }
+  }
+
+  function retryOnlineCatalog() {
+    if (!navigator.onLine) {
+      setIsNetworkOnline(false);
+      setOnlineCatalogError(t.onlineOfflineHint);
+      setNotice(t.onlineOfflineNotice);
+      return;
+    }
+
+    setIsNetworkOnline(true);
+    setOnlineCatalogError("");
+    setOnlineCatalogStatus("idle");
+    setNotice(t.onlineCatalogLoading);
   }
 
   async function installFont(fontId: string) {
@@ -1232,9 +1627,13 @@ function App() {
 
     if (patch.category) {
       setCategoryLabels((currentLabels) => uniqueStrings([...currentLabels, patch.category!]));
+      if (category !== t.all) setCategory(patch.category);
     }
+    if (patch.language && languageFilter !== "all") setLanguageFilter(patch.language);
     setFonts((currentFonts) =>
-      currentFonts.map((font) => (selectedIds.has(font.id) ? { ...font, ...patch } : font))
+      currentFonts.map((font) =>
+        selectedIds.has(font.id) ? applyFontMetadataPatch(font, patch) : font
+      )
     );
     setFontOverrides((currentOverrides) => {
       const nextOverrides = { ...currentOverrides };
@@ -1882,7 +2281,7 @@ function App() {
     const url =
       font.licenseUrl ??
       `https://www.google.com/search?q=${encodeURIComponent(`${font.family} font license`)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    void openExternalUrl(url);
   }
 
   return (
@@ -1904,7 +2303,12 @@ function App() {
       <WindowTitleBar themeMode={themeMode} />
       <Sidebar
         activeSection={activeSection}
-        onChange={setActiveSection}
+        onChange={(section) => {
+          setActiveSection(section);
+          setCategory(t.all);
+          setSourceFilter(section === "online" ? "google-fonts" : "all");
+          setNotice("");
+        }}
         counts={counts}
         collapsed={isSidebarCollapsed}
         onToggleCollapsed={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
@@ -1916,6 +2320,7 @@ function App() {
         onSelectProjectPack={(packId) => {
           setSelectedProjectPackId(packId);
           setActiveSection("projectPacks");
+          setNotice("");
         }}
         onRemoveProjectPack={removeProjectPack}
         onDropFontsToProjectPack={addFontsToProjectPack}
@@ -1944,20 +2349,37 @@ function App() {
 
         <div className="workspace-grid">
           <section className="browser-pane">
-            <div className="browser-header">
+            <div
+              className={
+                activeSection === "online"
+                  ? "browser-header online-browser-header"
+                  : "browser-header"
+              }
+            >
               <div>
                 <strong>
                   {activeSection === "all"
                     ? t.fontLibrary
+                    : activeSection === "online"
+                      ? t.onlineDiscover
                     : activeSection === "projectPacks"
                       ? t.projectPacks
                       : t.filteredResults}
                 </strong>
                 <span>
-                  {filteredFonts.length} / {managedFonts.length} {t.fontsUnit}
-                  {totalFontFiles ? ` · ${totalFontFiles} ${t.filesUnit}` : ""} · {platform.label}
+                  {filteredFonts.length} /{" "}
+                  {activeSection === "online"
+                    ? managedOnlineFonts.length
+                    : managedLocalFonts.length}{" "}
+                  {t.fontsUnit}
+                  {(activeSection === "online" ? onlineFontFiles : localFontFiles)
+                    ? ` · ${
+                        activeSection === "online" ? onlineFontFiles : localFontFiles
+                      } ${t.filesUnit}`
+                    : ""}{" "}
+                  · {platform.label}
                 </span>
-                {localIndex && <em>{localIndex.root}</em>}
+                {activeSection !== "online" && localIndex && <em>{localIndex.root}</em>}
                 {notice && <p className="notice-line">{notice}</p>}
                 {activeSection === "projectPacks" && selectedProjectPack && (
                   <button
@@ -1969,7 +2391,13 @@ function App() {
                   </button>
                 )}
               </div>
-              <div className="browser-tools">
+              <div
+                className={
+                  activeSection === "online"
+                    ? "browser-tools online-tools"
+                    : "browser-tools"
+                }
+              >
                 <div
                   className="category-tabs"
                   aria-label={t.filters}
@@ -1986,15 +2414,42 @@ function App() {
                     </button>
                   ))}
                 </div>
-                <button
-                  className="icon-button category-manage-button"
-                  type="button"
-                  title={t.manageCategories}
-                  aria-label={t.manageCategories}
-                  onClick={() => setIsCategoryManagerOpen(true)}
-                >
-                  <Tags size={17} />
-                </button>
+                {activeSection !== "online" && (
+                  <button
+                    className="icon-button category-manage-button"
+                    type="button"
+                    title={t.manageCategories}
+                    aria-label={t.manageCategories}
+                    onClick={() => setIsCategoryManagerOpen(true)}
+                  >
+                    <Tags size={17} />
+                  </button>
+                )}
+                {activeSection === "online" && (
+                  <OnlineSourceBar
+                    activeSource={
+                      sourceFilter === "google-fonts" || sourceFilter === "fontsource"
+                        ? sourceFilter
+                        : "all"
+                    }
+                    googleFontsCount={
+                      managedOnlineFonts.filter((font) => font.source === "google-fonts").length
+                    }
+                    fontsourceCount={
+                      managedOnlineFonts.filter((font) => font.source === "fontsource").length
+                    }
+                    onSelectGoogleFonts={() => {
+                      setSourceFilter("google-fonts");
+                      setQuery("");
+                      setCategory(t.all);
+                    }}
+                    onSelectFontsource={() => {
+                      setSourceFilter("fontsource");
+                      setQuery("");
+                      setCategory(t.all);
+                    }}
+                  />
+                )}
                 <div className="preview-scale-control">
                   <input
                     aria-label={t.previewScale}
@@ -2009,17 +2464,27 @@ function App() {
               </div>
             </div>
 
-            <LicenseOverviewBar
-              freeCount={licenseOverview.freeCount}
-              reviewCount={licenseOverview.reviewCount}
-              totalCount={licenseOverview.totalCount}
-              onOpenReview={() => {
-                setActiveSection("review");
-                setCategory(t.all);
-                setLicenseFilter("all");
-                setSourceFilter("all");
-              }}
-            />
+            {activeSection === "online" && !isNetworkOnline && managedOnlineFonts.length > 0 && (
+              <OnlineOfflineBanner onRetry={retryOnlineCatalog} />
+            )}
+
+            {!(
+              activeSection === "online" &&
+              managedOnlineFonts.length === 0 &&
+              onlineCatalogStatus !== "loaded"
+            ) && (
+              <LicenseOverviewBar
+                freeCount={licenseOverview.freeCount}
+                reviewCount={licenseOverview.reviewCount}
+                totalCount={licenseOverview.totalCount}
+                onOpenReview={() => {
+                  setActiveSection("review");
+                  setCategory(t.all);
+                  setLicenseFilter("all");
+                  setSourceFilter("all");
+                }}
+              />
+            )}
 
             <BulkActionBar
               activeSection={activeSection}
@@ -2040,7 +2505,12 @@ function App() {
               onOpenCompare={() => setIsComparePanelOpen(true)}
             />
 
-            {!query.trim() && (
+            {!query.trim() &&
+              !(
+                activeSection === "online" &&
+                managedOnlineFonts.length === 0 &&
+                onlineCatalogStatus !== "loaded"
+              ) && (
               <RecentFontStrip
                 fonts={recentFonts}
                 selectedId={selectedFont?.id}
@@ -2048,38 +2518,56 @@ function App() {
                 activeVariantIds={activeVariantIds}
                 fontAxisValues={fontAxisValues}
                 activePreviewFamily={selectedDetailFontFamily}
-                onSelect={setSelectedId}
+                onSelect={selectRecentFont}
               />
             )}
 
-            <FontList
-              fonts={filteredFonts}
-              selectedId={selectedFont?.id}
-              previewText={previewText}
-              previewSize={previewSize}
-              activePreviewFamily={selectedDetailFontFamily}
-              hiddenFontIds={hiddenFontIds}
-              removedFontIds={removedFontIds}
-              selectedFontIds={selectedFontIds}
-              activeVariantIds={activeVariantIds}
-              fontAxisValues={fontAxisValues}
-              emptyTitle={activeSection === "projectPacks" ? t.packEmpty : undefined}
-              emptyHint={activeSection === "projectPacks" ? t.projectPackDropHint : undefined}
-              onSelect={selectFont}
-              onToggleSelection={toggleFontSelection}
-              onSelectVariant={selectVariant}
-              onToggleFavorite={toggleFavorite}
-              onHideFont={hideFont}
-              onRestoreFont={restoreFont}
-              onRemoveFromLibrary={removeFromLibrary}
-              onRestoreToLibrary={restoreToLibrary}
-              isProjectPackView={activeSection === "projectPacks"}
-              onRemoveFromProjectPack={removeFontFromProjectPack}
-              onOpenLocation={(font) => void openLocation(font)}
-              onCopyFontName={(font) => void copyFontName(font)}
-              onCopyFontPath={(font) => void copyFontPath(font)}
-              onVisibleFontIdsChange={setVisibleListFontIds}
-            />
+            {activeSection === "online" &&
+            managedOnlineFonts.length === 0 &&
+            onlineCatalogStatus !== "loaded" ? (
+              <OnlineCatalogState
+                status={onlineCatalogStatus}
+                error={onlineCatalogError}
+                isNetworkOnline={isNetworkOnline}
+                onRetry={retryOnlineCatalog}
+                onReturnLocal={() => {
+                  setActiveSection("all");
+                  setCategory(t.all);
+                  setSourceFilter("all");
+                  setNotice("");
+                }}
+              />
+            ) : (
+              <FontList
+                fonts={filteredFonts}
+                selectedId={selectedFont?.id}
+                previewText={previewText}
+                previewSize={previewSize}
+                activePreviewFamily={selectedDetailFontFamily}
+                hiddenFontIds={hiddenFontIds}
+                removedFontIds={removedFontIds}
+                selectedFontIds={selectedFontIds}
+                activeVariantIds={activeVariantIds}
+                fontAxisValues={fontAxisValues}
+                scrollTarget={fontListScrollTarget}
+                emptyTitle={activeSection === "projectPacks" ? t.packEmpty : undefined}
+                emptyHint={activeSection === "projectPacks" ? t.projectPackDropHint : undefined}
+                onSelect={selectFont}
+                onToggleSelection={toggleFontSelection}
+                onSelectVariant={selectVariant}
+                onToggleFavorite={toggleFavorite}
+                onHideFont={hideFont}
+                onRestoreFont={restoreFont}
+                onRemoveFromLibrary={removeFromLibrary}
+                onRestoreToLibrary={restoreToLibrary}
+                isProjectPackView={activeSection === "projectPacks"}
+                onRemoveFromProjectPack={removeFontFromProjectPack}
+                onOpenLocation={(font) => void openLocation(font)}
+                onCopyFontName={(font) => void copyFontName(font)}
+                onCopyFontPath={(font) => void copyFontPath(font)}
+                onVisibleFontIdsChange={setVisibleListFontIds}
+              />
+            )}
           </section>
 
           <div className="side-stack">
@@ -2103,6 +2591,9 @@ function App() {
                 selectedFont ? systemFontStatuses[selectedFont.id] : undefined
               }
               isSystemFontBusy={selectedFont?.id === systemFontBusyId}
+              isOnlineDetailsLoading={selectedFont?.id === onlineDetailBusyId}
+              isOnlineDownloadBusy={selectedFont?.id === onlineDownloadBusyId}
+              isNetworkOnline={isNetworkOnline}
               onSelectVariant={selectVariant}
               onToggleAutoPlayVariants={() =>
                 setIsAutoPlayingVariants((isAutoPlaying) => !isAutoPlaying)
@@ -2116,6 +2607,7 @@ function App() {
               onAddToCurrentProjectPack={addFontToCurrentProjectPack}
               onInstallFont={installFont}
               onUninstallFont={uninstallFont}
+              onDownloadOnlineFont={downloadOnlineFont}
               onOpenLocation={openLocation}
               onOpenLicense={openLicense}
             />
@@ -2780,6 +3272,73 @@ function LicenseOverviewBar({
   );
 }
 
+function OnlineOfflineBanner({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="online-offline-banner" role="status">
+      <WifiOff size={15} />
+      <div>
+        <strong>{t.onlineOfflineCachedTitle}</strong>
+        <span>{t.onlineOfflineCachedHint}</span>
+      </div>
+      <button className="mini-tool" type="button" onClick={onRetry}>
+        <RefreshCw size={13} />
+        {t.retryConnection}
+      </button>
+    </div>
+  );
+}
+
+function OnlineCatalogState({
+  status,
+  error,
+  isNetworkOnline,
+  onRetry,
+  onReturnLocal
+}: {
+  status: OnlineCatalogStatus;
+  error: string;
+  isNetworkOnline: boolean;
+  onRetry: () => void;
+  onReturnLocal: () => void;
+}) {
+  const isLoading = status === "loading";
+
+  return (
+    <div className="online-catalog-state" role={isLoading ? "status" : "alert"}>
+      <div className={isLoading ? "online-state-icon loading" : "online-state-icon"}>
+        {isLoading ? <RefreshCw size={22} /> : <WifiOff size={22} />}
+      </div>
+      <strong>
+        {isLoading
+          ? t.onlineCatalogLoading
+          : isNetworkOnline
+            ? t.onlineServiceUnavailable
+            : t.onlineOfflineTitle}
+      </strong>
+      <span>
+        {isLoading
+          ? t.onlineLoadingHint
+          : isNetworkOnline
+            ? t.onlineServiceUnavailableHint
+            : t.onlineOfflineHint}
+      </span>
+      {!isLoading && error && isNetworkOnline && <em>{error}</em>}
+      <div>
+        {!isLoading && (
+          <button className="command-button" type="button" onClick={onRetry}>
+            <RefreshCw size={16} />
+            {t.retryConnection}
+          </button>
+        )}
+        <button className="command-button ghost" type="button" onClick={onReturnLocal}>
+          <ArrowLeft size={16} />
+          {t.returnLocalLibrary}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BulkActionBar({
   activeSection,
   selectedCount,
@@ -2812,6 +3371,7 @@ function BulkActionBar({
   const isRemovedView = activeSection === "removed";
   const isHiddenView = activeSection === "hidden";
   const isProjectPackView = activeSection === "projectPacks";
+  const isOnlineView = activeSection === "online";
 
   if (selectedCount === 0) return null;
 
@@ -2849,7 +3409,7 @@ function BulkActionBar({
         >
           {t.compareFonts}
         </button>
-        {!isRemovedView && (
+        {!isRemovedView && !isOnlineView && (
           <div
             className="bulk-mark-wrap"
             onClick={(event) => event.stopPropagation()}
@@ -2900,7 +3460,11 @@ function BulkActionBar({
             )}
           </div>
         )}
-        {isRemovedView ? (
+        {isOnlineView ? (
+          <button className="mini-tool" type="button" onClick={onToggleFavorite}>
+            {allFavorite ? t.batchCancelFavorite : t.batchFavorite}
+          </button>
+        ) : isRemovedView ? (
           <button className="mini-tool active" type="button" onClick={onRestore}>
             {t.batchRestore}
           </button>
@@ -3269,6 +3833,46 @@ function sanitizeFilename(value: string) {
     .slice(0, 80) || "YFonts-project-pack";
 }
 
+function preserveFontState(currentFont: FontAsset, detailedFont: FontAsset): FontAsset {
+  return {
+    ...detailedFont,
+    isFavorite: currentFont.isFavorite,
+    status: currentFont.status,
+    libraryRoot: currentFont.libraryRoot ?? detailedFont.libraryRoot
+  };
+}
+
+function uniqueOnlineDownloadVariants(variants: FontVariant[]) {
+  const seenUrls = new Set<string>();
+
+  return variants.filter((variant) => {
+    const url = variant.downloadUrl ?? variant.path;
+    if (!url || seenUrls.has(url)) return false;
+    seenUrls.add(url);
+    return true;
+  });
+}
+
+function getOnlineFontFilename(font: FontAsset, variant: FontVariant) {
+  const extension = variant.extension.toLowerCase() || "ttf";
+  const suggestedStem = (
+    variant.relativePath?.replace(/\.[^.]+$/, "") ??
+    `${font.family}-${variant.weight}-${variant.styleName}`
+  )
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 72);
+
+  return `${suggestedStem || sanitizeFilename(font.family)}.${extension}`;
+}
+
+function normalizeFontFamily(value: string) {
+  return value
+    .toLocaleLowerCase("en")
+    .replace(/[^a-z0-9\u3400-\u9fff]+/g, "");
+}
+
 function getPathFilename(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? "";
 }
@@ -3375,6 +3979,13 @@ function downloadTextFile(filename: string, blob: Blob) {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadRemoteFileInBrowser(url: string, filename: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  downloadTextFile(filename, await response.blob());
 }
 
 function uniqueFonts(fonts: Array<FontAsset | undefined>) {
@@ -3747,6 +4358,23 @@ function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+function applyFontMetadataPatch(font: FontAsset, patch: FontMetadataOverride): FontAsset {
+  const language = patch.language ?? font.language;
+
+  return {
+    ...font,
+    ...patch,
+    languageSupport:
+      language === "english" ? [t.english, t.number] : [t.chinese, t.english, t.number],
+    sampleText:
+      language === "english"
+        ? t.defaultSampleEn
+        : language === "mixed"
+          ? `${t.defaultPreview} / ${t.defaultSampleEn}`
+          : t.defaultPreview
+  };
 }
 
 function scrollCategoryTabs(event: WheelEvent<HTMLDivElement>) {

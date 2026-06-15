@@ -24,6 +24,7 @@ export type FontVariant = {
   relativePath?: string;
   libraryRoot?: string;
   fontUrl?: string;
+  downloadUrl?: string;
   fontFormat?: string;
   isPreviewable: boolean;
   isItalic: boolean;
@@ -56,6 +57,8 @@ export type FontAsset = {
   totalFiles: number;
   canPreview: boolean;
   licenseUrl?: string;
+  remoteId?: string;
+  remoteDetailsLoaded?: boolean;
   variableAxes?: Array<{
     tag: string;
     label: string;

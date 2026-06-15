@@ -170,7 +170,10 @@ async function walkFontFolder(root: string, folder: string, records: Array<Recor
     const folderName = pickScannedFamilyFolder(directoryParts, path.basename(root));
     const baseName = path.basename(entry.name, extensionWithDot);
     const family = cleanScannedFamilyName(folderName, baseName);
-    const sourceLibrary = directoryParts[0] || path.basename(root) || "Local";
+    const sourceLibrary = pickScannedSourceLibrary(
+      directoryParts,
+      path.basename(root) || "Local"
+    );
 
     records.push({
       id: `scan-${createScanId(relativePath)}`,
@@ -194,9 +197,8 @@ async function walkFontFolder(root: string, folder: string, records: Array<Recor
 }
 
 function inferScannedCategory(directoryParts: string[]) {
-  if (directoryParts.length >= 3) return directoryParts[1];
-  if (directoryParts.length >= 2 && !isGenericFontFolder(directoryParts[1])) {
-    return directoryParts[1];
+  for (let index = directoryParts.length - 1; index >= 0; index -= 1) {
+    if (isBroadCategoryFolder(directoryParts[index])) return directoryParts[index];
   }
   return "Local";
 }
@@ -207,39 +209,110 @@ function pickScannedFamilyFolder(directoryParts: string[], rootName: string) {
     if (!isGenericFontFolder(folder) && !isBroadCategoryFolder(folder)) return folder;
   }
 
-  return rootName;
+  if (directoryParts.some(isBroadCategoryFolder)) return "";
+  return cleanScannedRootFamilyLabel(rootName);
 }
 
 function isGenericFontFolder(value: string) {
-  return /^(static|variable fonts?|webfonts?|fonts?|font files?|ttf|otf|woff2?|desktop)$/i.test(
-    value.trim()
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return /^(?:static(?:-fonts?)?|variable(?:-fonts?)?|web(?:-fonts?)?|webfonts?|.+-webfonts?|fonts?|font-files?|desktop|truetype|postscript|ttf|otf|woff2?|opentype(?:-(?:ps|tt))?|variable-(?:ps|tt)|web-(?:ps|tt))$/.test(
+    normalized
   );
 }
 
 function isBroadCategoryFolder(value: string) {
-  return /^(中文|英文|中文字体|英文字体|本地|local|黑体|宋体|楷体|圆体|隶书|篆体|手写|复古|创意|线体|衬线|无衬线|卡通|艺术|serif|sans|sans serif|script|display|decorative|handwriting)$/i.test(
-    value.trim()
+  const normalized = value.trim().toLowerCase();
+  return /^(?:chinese|english|中文|英文|中文字体|英文字体|本地|local|黑体|宋体|楷体|圆体|隶书|篆体|手写|手写体|复古|复古体|创意|创意体|线体|衬线|无衬线|卡通|卡通体|艺术|艺术体|serif|sans|sans serif|script|display|decorative|handwriting)$/.test(
+    normalized
   );
 }
 
 function cleanScannedFamilyName(folderName: string, baseName: string) {
-  const folder = folderName
-    .replace(/^\d+[-_\s]*/, "")
-    .replace(/static|variable fonts?/gi, "")
-    .trim();
-  const base = baseName
-    .replace(
-      /[-_](thin|extralight|extra-light|light|regular|medium|semibold|semi-bold|bold|extrabold|extra-bold|black|heavy|italic|oblique).*$/i,
-      ""
-    )
-    .replace(/[-_]?variablefont.*$/i, "")
-    .trim();
+  const folderCandidate = cleanScannedRootFamilyLabel(folderName);
+  const folder = stripScannedFamilyInstanceSuffix(
+    (isGenericFontFolder(folderCandidate) ? "" : folderCandidate)
+      .replace(/^\d+[-_\s]*/, "")
+      .replace(/static|variable fonts?/gi, "")
+      .trim()
+  );
+  const base = stripScannedFamilyInstanceSuffix(
+    baseName
+      .replace(
+        /[-_](thin|extralight|extra-light|light|regular|medium|semibold|semi-bold|bold|extrabold|extra-bold|black|heavy|italic|oblique).*$/i,
+        ""
+      )
+      .replace(/[-_]?variablefont.*$/i, "")
+      .trim()
+  );
 
-  return folder.length >= 2 ? folder : base || baseName;
+  if (folder.length >= 2) {
+    const shouldUseBaseCasing =
+      folder.toLowerCase() === base.toLowerCase() &&
+      folder === folder.toLowerCase() &&
+      /[A-Z]/.test(base);
+    return shouldUseBaseCasing ? base : folder;
+  }
+  return base || baseName;
+}
+
+function stripScannedFamilyInstanceSuffix(value: string) {
+  const withoutOpticalSize = value
+    .replace(/[-_\s]+\d+(?:pt|opsz)(?:[-_\s].*)?$/i, "")
+    .trim()
+    .replace(/[-_]+$/, "");
+  const lowered = withoutOpticalSize.toLowerCase();
+
+  for (const suffix of [
+    "ultracondensed",
+    "extracondensed",
+    "semicondensed",
+    "condensed",
+    "narrow",
+    "semiexpanded",
+    "extraexpanded",
+    "ultraexpanded",
+    "expanded",
+    "wide"
+  ]) {
+    if (!lowered.endsWith(suffix)) continue;
+    const start = withoutOpticalSize.length - suffix.length;
+    const previous = withoutOpticalSize[start - 1];
+    const first = withoutOpticalSize[start];
+    if (start === 0 || /[-_\s]/.test(previous) || /[A-Z]/.test(first)) {
+      return withoutOpticalSize.slice(0, start).replace(/[-_\s]+$/, "");
+    }
+  }
+
+  return withoutOpticalSize;
+}
+
+function cleanScannedRootFamilyLabel(value: string) {
+  if (isGenericFontFolder(value) || isBroadCategoryFolder(value)) return "";
+  return value.replace(/[-_\s]+(?:main|master|release|source)$/i, "").trim();
+}
+
+function pickScannedSourceLibrary(directoryParts: string[], rootName: string) {
+  return (
+    directoryParts.find(
+      (folder) => !isGenericFontFolder(folder) && !isBroadCategoryFolder(folder)
+    ) || rootName
+  );
 }
 
 function inferScannedStyleName(name: string) {
   const normalized = name.toLowerCase();
+  const widthStyle = [
+    ["ultracondensed", "UltraCondensed"],
+    ["extracondensed", "ExtraCondensed"],
+    ["semicondensed", "SemiCondensed"],
+    ["condensed", "Condensed"],
+    ["narrow", "Narrow"],
+    ["semiexpanded", "SemiExpanded"],
+    ["extraexpanded", "ExtraExpanded"],
+    ["ultraexpanded", "UltraExpanded"],
+    ["expanded", "Expanded"],
+    ["wide", "Wide"]
+  ].find(([token]) => normalized.includes(token))?.[1];
   const styles = [
     ["thin", "Thin"],
     ["extralight", "ExtraLight"],
@@ -258,6 +331,7 @@ function inferScannedStyleName(name: string) {
     ["oblique", "Oblique"]
   ];
   const found = styles.filter(([token]) => normalized.includes(token)).map(([, label]) => label);
+  if (widthStyle) found.unshift(widthStyle);
   if (normalized.includes("variablefont") || normalized.includes("vf")) found.unshift("Variable");
   return found.length > 0 ? Array.from(new Set(found)).join(" / ") : "Regular";
 }

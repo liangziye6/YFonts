@@ -10,6 +10,7 @@ import {
   Pause,
   Play,
   PackageMinus,
+  PackageOpen,
   RotateCcw,
   ShieldCheck,
   Type,
@@ -26,7 +27,7 @@ import {
 } from "../lib/preview";
 import type { FontMetadataOverride } from "../lib/libraryState";
 import type { PlatformProfile } from "../lib/platform";
-import type { FontAsset, LicenseKind } from "../types";
+import type { FontAsset, FontLanguage, LicenseKind } from "../types";
 
 type DetailsPanelProps = {
   font?: FontAsset;
@@ -44,6 +45,9 @@ type DetailsPanelProps = {
   isInstalledByYFonts: boolean;
   systemFontStatus?: "checking" | "installed" | "not-installed" | "unavailable";
   isSystemFontBusy: boolean;
+  isOnlineDetailsLoading: boolean;
+  isOnlineDownloadBusy: boolean;
+  isNetworkOnline: boolean;
   onSelectVariant: (fontId: string, variantId: string) => void;
   onToggleAutoPlayVariants: () => void;
   onAxisValueChange: (fontId: string, axisTag: string, value: number) => void;
@@ -55,6 +59,13 @@ type DetailsPanelProps = {
   onAddToCurrentProjectPack: (fontId: string) => void;
   onInstallFont: (fontId: string) => void;
   onUninstallFont: (fontId: string) => void;
+  onDownloadOnlineFont: (
+    fontId: string,
+    options?: {
+      scope?: "variant" | "family";
+      installAfterDownload?: boolean;
+    }
+  ) => void;
   onOpenLocation: (font: FontAsset) => void;
   onOpenLicense: (font: FontAsset) => void;
 };
@@ -75,6 +86,9 @@ export function DetailsPanel({
   isInstalledByYFonts,
   systemFontStatus,
   isSystemFontBusy,
+  isOnlineDetailsLoading,
+  isOnlineDownloadBusy,
+  isNetworkOnline,
   onSelectVariant,
   onToggleAutoPlayVariants,
   onAxisValueChange,
@@ -86,6 +100,7 @@ export function DetailsPanel({
   onAddToCurrentProjectPack,
   onInstallFont,
   onUninstallFont,
+  onDownloadOnlineFont,
   onOpenLocation,
   onOpenLicense
 }: DetailsPanelProps) {
@@ -101,6 +116,7 @@ export function DetailsPanel({
   }
 
   const activeVariant = getActiveVariant(font, activeVariantId);
+  const onlineFont = font.source === "fontsource" || font.source === "google-fonts";
   const isSafeLicense = ["ofl", "free-commercial", "apache", "cc0"].includes(font.license);
   const specimen = resolveFontPreviewText(font, previewText);
   const AutoPlayIcon = isAutoPlayingVariants ? Pause : Play;
@@ -114,6 +130,8 @@ export function DetailsPanel({
     ? axisValues?.wght ?? weightAxis?.value
     : undefined;
   const staticWeightVariants = getStaticWeightVariants(font, activeVariant.isItalic);
+  const previewVariants = getPreviewVariants(font);
+  const fileGroups = getFontFileGroups(font);
   const staticWeightIndex = Math.max(
     0,
     staticWeightVariants.findIndex((variant) => variant.weight === activeVariant.weight)
@@ -132,6 +150,7 @@ export function DetailsPanel({
           <span>
             {font.foundry} · {font.totalFiles} {t.fileCount}
           </span>
+          {isOnlineDetailsLoading && <em>{t.onlineDetailsLoading}</em>}
         </div>
       </div>
 
@@ -179,6 +198,13 @@ export function DetailsPanel({
           <strong>{font.sizeLabel}</strong>
         </div>
       </div>
+      {onlineFont && (
+        <p className="detail-note online-source-note">
+          {font.source === "google-fonts"
+            ? t.googleFontsPreviewSource
+            : t.onlinePreviewSource}
+        </p>
+      )}
 
       <section className="detail-section">
         <h3>
@@ -187,12 +213,34 @@ export function DetailsPanel({
         </h3>
         <div className="metadata-editor">
           <label>
+            <span>{t.fontLanguage}</span>
+            <select
+              value={font.language}
+              onChange={(event) => {
+                const language = event.target.value as FontLanguage;
+                onUpdateFontMetadata(font.id, {
+                  language,
+                  category: getLanguageFallbackCategory(font.category, language)
+                });
+              }}
+            >
+              <option value="chinese">{t.chinese}</option>
+              <option value="english">{t.english}</option>
+              <option value="mixed">{t.mixedLanguage}</option>
+            </select>
+          </label>
+          <label>
             <span>{t.styleCategory}</span>
             <select
               value={font.category}
-              onChange={(event) =>
-                onUpdateFontMetadata(font.id, { category: event.target.value })
-              }
+              onChange={(event) => {
+                const category = event.target.value;
+                const categoryLanguage = getBuiltInCategoryLanguage(category);
+                onUpdateFontMetadata(font.id, {
+                  category,
+                  ...(categoryLanguage ? { language: categoryLanguage } : {})
+                });
+              }}
             >
               {categoryOptions.map((category) => (
                 <option key={category} value={category}>
@@ -221,7 +269,7 @@ export function DetailsPanel({
             </select>
           </label>
         </div>
-        {!isRemoved && (
+        {!isRemoved && !onlineFont && (
           <div className="metadata-action-row">
             <button
               className="command-button"
@@ -289,7 +337,7 @@ export function DetailsPanel({
           </div>
         </div>
         <div className="variant-list">
-          {font.variants.map((variant) => (
+          {previewVariants.map((variant) => (
             <button
               key={variant.id}
               className={variant.id === activeVariant.id ? "variant-button active" : "variant-button"}
@@ -339,21 +387,33 @@ export function DetailsPanel({
           <FileText size={16} />
           {t.fontFiles}
         </h3>
-        <div className="file-list">
-          {font.variants.map((variant) => (
-            <button
-              key={variant.id}
-              className={variant.id === activeVariant.id ? "file-item active" : "file-item"}
-              type="button"
-              onClick={() => onSelectVariant(font.id, variant.id)}
-              title={variant.path ?? variant.relativePath}
-            >
-              <span>{variant.styleName}</span>
-              <strong>
-                {variant.weight} / {variant.format} / {variant.sizeLabel}
-              </strong>
-              <em>{variant.relativePath ?? variant.path}</em>
-            </button>
+        <div className="file-groups">
+          {fileGroups.map((group) => (
+            <section className="file-group" key={group.id}>
+              <div className="file-group-head">
+                <strong>{group.label}</strong>
+                <span>
+                  {group.variants.length} {t.fileCount}
+                </span>
+              </div>
+              <div className="file-list">
+                {group.variants.map((variant) => (
+                  <button
+                    key={variant.id}
+                    className={variant.id === activeVariant.id ? "file-item active" : "file-item"}
+                    type="button"
+                    onClick={() => onSelectVariant(font.id, variant.id)}
+                    title={variant.path ?? variant.relativePath}
+                  >
+                    <span>{variant.styleName}</span>
+                    <strong>
+                      {variant.weight} / {variant.format} / {variant.sizeLabel}
+                    </strong>
+                    <em>{variant.relativePath ?? variant.path}</em>
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       </section>
@@ -399,8 +459,14 @@ export function DetailsPanel({
               ? isInstalledByYFonts
                 ? t.uninstallingFont
                 : t.installingFont
+              : isOnlineDownloadBusy
+                ? t.installingFont
               : isInstalledByYFonts
                 ? t.installedByYFonts
+                : onlineFont && font.status === "downloaded"
+                  ? t.downloadedNotInstalled
+                  : onlineFont
+                    ? t.downloadBeforeInstall
                 : systemFontStatus === "installed"
                   ? t.systemFontInstalled
                   : systemFontStatus === "not-installed"
@@ -409,74 +475,162 @@ export function DetailsPanel({
                       ? t.checkingSystemFont
                       : t.desktopInstallOnly}
           </span>
-          {isDesktopRuntime && (isInstalledByYFonts || systemFontStatus === "not-installed") && (
+          {isDesktopRuntime &&
+            (isInstalledByYFonts ||
+              (onlineFont && !isInstalledByYFonts) ||
+              systemFontStatus === "not-installed") && (
             <button
               className={isInstalledByYFonts ? "mini-tool danger" : "mini-tool"}
               type="button"
-              disabled={isSystemFontBusy}
-              onClick={() =>
-                isInstalledByYFonts ? onUninstallFont(font.id) : onInstallFont(font.id)
+              disabled={
+                isSystemFontBusy ||
+                isOnlineDownloadBusy ||
+                (onlineFont && !isNetworkOnline)
               }
-              title={isInstalledByYFonts ? t.uninstallFont : t.fontInstallHint}
+              onClick={() =>
+                isInstalledByYFonts
+                  ? onUninstallFont(font.id)
+                  : onlineFont
+                    ? onDownloadOnlineFont(font.id, {
+                        scope: "variant",
+                        installAfterDownload: true
+                      })
+                    : onInstallFont(font.id)
+              }
+              title={
+                isInstalledByYFonts
+                  ? t.uninstallFont
+                  : onlineFont && !isNetworkOnline
+                    ? t.onlineOfflineDownloadHint
+                    : t.fontInstallHint
+              }
             >
               {isInstalledByYFonts ? <PackageMinus size={14} /> : <Download size={14} />}
-              <span>{isInstalledByYFonts ? t.uninstallFont : t.installFont}</span>
+              <span>
+                {isInstalledByYFonts
+                  ? t.uninstallFont
+                  : onlineFont
+                    ? t.downloadAndInstall
+                    : t.installFont}
+              </span>
             </button>
           )}
         </div>
       </section>
 
-      <section className="detail-section">
-        <h3>
-          <Info size={16} />
-          {t.managementActions}
-        </h3>
-        <div className="management-actions">
-          {isRemoved ? (
-            <button
-              className="management-button"
-              type="button"
-              onClick={() => onRestoreToLibrary(font.id)}
-            >
-              <RotateCcw size={16} />
-              {t.restoreToLibrary}
-            </button>
-          ) : (
-            <>
+      {!onlineFont && (
+        <section className="detail-section">
+          <h3>
+            <Info size={16} />
+            {t.managementActions}
+          </h3>
+          <div className="management-actions">
+            {isRemoved ? (
               <button
                 className="management-button"
                 type="button"
-                onClick={() => (isHidden ? onRestoreFont(font.id) : onHideFont(font.id))}
+                onClick={() => onRestoreToLibrary(font.id)}
               >
-                {isHidden ? <RotateCcw size={16} /> : <EyeOff size={16} />}
-                {isHidden ? t.restoreFont : t.hideFont}
+                <RotateCcw size={16} />
+                {t.restoreToLibrary}
               </button>
-              <button
-                className="management-button danger"
-                type="button"
-                onClick={() => onRemoveFromLibrary(font.id)}
-              >
-                <XCircle size={16} />
-                {t.removeFromLibrary}
-              </button>
-            </>
-          )}
-        </div>
-        <p className="detail-note">{t.safeRemoveHint}</p>
-      </section>
+            ) : (
+              <>
+                <button
+                  className="management-button"
+                  type="button"
+                  onClick={() => (isHidden ? onRestoreFont(font.id) : onHideFont(font.id))}
+                >
+                  {isHidden ? <RotateCcw size={16} /> : <EyeOff size={16} />}
+                  {isHidden ? t.restoreFont : t.hideFont}
+                </button>
+                <button
+                  className="management-button danger"
+                  type="button"
+                  onClick={() => onRemoveFromLibrary(font.id)}
+                >
+                  <XCircle size={16} />
+                  {t.removeFromLibrary}
+                </button>
+              </>
+            )}
+          </div>
+          <p className="detail-note">{t.safeRemoveHint}</p>
+        </section>
+      )}
 
-      <div className="detail-actions">
-        <button className="command-button" type="button" onClick={() => onOpenLocation(font)}>
-          <FolderOpen size={17} />
-          {t.openLocation}
-        </button>
-        <button className="command-button ghost" type="button" onClick={() => onOpenLicense(font)}>
+      <div className={onlineFont ? "detail-actions online-actions" : "detail-actions"}>
+        {onlineFont ? (
+          <button
+            className="command-button"
+            type="button"
+            disabled={isOnlineDownloadBusy || !isNetworkOnline}
+            onClick={() => onDownloadOnlineFont(font.id, { scope: "variant" })}
+            title={isNetworkOnline ? t.downloadCurrentStyle : t.onlineOfflineDownloadHint}
+          >
+            <Download size={17} />
+            {isOnlineDownloadBusy ? t.downloadingOnlineFont : t.downloadCurrentStyle}
+          </button>
+        ) : (
+          <button className="command-button" type="button" onClick={() => onOpenLocation(font)}>
+            <FolderOpen size={17} />
+            {t.openLocation}
+          </button>
+        )}
+        {onlineFont && (
+          <button
+            className="command-button ghost"
+            type="button"
+            disabled={
+              !isDesktopRuntime ||
+              isOnlineDownloadBusy ||
+              isOnlineDetailsLoading ||
+              !isNetworkOnline
+            }
+            onClick={() => onDownloadOnlineFont(font.id, { scope: "family" })}
+            title={
+              !isNetworkOnline
+                ? t.onlineOfflineDownloadHint
+                : isDesktopRuntime
+                  ? t.downloadFontFamily
+                  : t.desktopInstallOnly
+            }
+          >
+            <PackageOpen size={17} />
+            {t.downloadFontFamily}
+          </button>
+        )}
+        <button
+          className={
+            onlineFont
+              ? "command-button ghost online-license-action"
+              : "command-button ghost"
+          }
+          type="button"
+          onClick={() => onOpenLicense(font)}
+        >
           <ExternalLink size={17} />
           {t.licenseSource}
         </button>
       </div>
     </aside>
   );
+}
+
+function getBuiltInCategoryLanguage(category: string): FontLanguage | undefined {
+  if ([t.sansCn, t.song, t.kai, t.lishu, t.seal, t.cnOther].includes(category)) {
+    return "chinese";
+  }
+  if ([t.serif, t.sans, t.line, t.retro, t.creative, t.cartoon, t.art, t.enOther].includes(category)) {
+    return "english";
+  }
+  return undefined;
+}
+
+function getLanguageFallbackCategory(category: string, language: FontLanguage) {
+  const categoryLanguage = getBuiltInCategoryLanguage(category);
+  if (!categoryLanguage || language === "mixed" || categoryLanguage === language) return category;
+  return language === "chinese" ? t.cnOther : t.enOther;
 }
 
 function getStaticWeightVariants(font: FontAsset, preferItalic: boolean) {
@@ -497,4 +651,69 @@ function getStaticWeightVariants(font: FontAsset, preferItalic: boolean) {
   }
 
   return Array.from(variantsByWeight.values()).sort((left, right) => left.weight - right.weight);
+}
+
+function getPreviewVariants(font: FontAsset) {
+  const variantsByStyle = new Map<string, FontAsset["variants"][number]>();
+
+  for (const variant of font.variants) {
+    if (!variant.isPreviewable) continue;
+    const variable = isVariableFontVariant(variant);
+    const key = [
+      variable ? "variable" : "static",
+      variant.weight,
+      variant.isItalic ? "italic" : "normal",
+      variant.styleName.toLowerCase()
+    ].join("-");
+    const current = variantsByStyle.get(key);
+
+    if (!current || getPreviewFormatPriority(variant.extension) < getPreviewFormatPriority(current.extension)) {
+      variantsByStyle.set(key, variant);
+    }
+  }
+
+  return Array.from(variantsByStyle.values()).sort((left, right) => {
+    const variableDifference =
+      Number(isVariableFontVariant(right)) - Number(isVariableFontVariant(left));
+    if (variableDifference !== 0) return variableDifference;
+    if (left.weight !== right.weight) return left.weight - right.weight;
+    if (left.isItalic !== right.isItalic) return left.isItalic ? 1 : -1;
+    return left.styleName.localeCompare(right.styleName);
+  });
+}
+
+function getPreviewFormatPriority(extension: string) {
+  const order = ["ttf", "otf", "woff2", "woff", "ttc"];
+  const index = order.indexOf(extension.toLowerCase());
+  return index >= 0 ? index : order.length;
+}
+
+function getFontFileGroups(font: FontAsset) {
+  const groups = [
+    {
+      id: "variable",
+      label: t.variableFontFiles,
+      variants: font.variants.filter(isVariableFontVariant)
+    },
+    {
+      id: "desktop",
+      label: t.desktopFontFiles,
+      variants: font.variants.filter(
+        (variant) =>
+          !isVariableFontVariant(variant) &&
+          ["ttf", "otf", "ttc"].includes(variant.extension.toLowerCase())
+      )
+    },
+    {
+      id: "web",
+      label: t.webFontFiles,
+      variants: font.variants.filter(
+        (variant) =>
+          !isVariableFontVariant(variant) &&
+          ["woff", "woff2"].includes(variant.extension.toLowerCase())
+      )
+    }
+  ];
+
+  return groups.filter((group) => group.variants.length > 0);
 }
