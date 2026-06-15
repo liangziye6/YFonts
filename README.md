@@ -25,6 +25,8 @@ Windows builds are published on the
 The installer contains the application only. It does not include the
 developer's fonts, local paths, favorites, or project packs.
 
+See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
+
 ## Development
 
 Requirements:
