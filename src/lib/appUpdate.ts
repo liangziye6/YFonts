@@ -4,6 +4,7 @@ import { invokeTauri, isTauriRuntime } from "./tauri";
 const latestReleaseUrl = "https://api.github.com/repos/liangziye6/YFonts/releases/latest";
 const updateCacheKey = "yfonts:update-check";
 const updateCacheLifetime = 6 * 60 * 60 * 1000;
+let activeUpdateRequest: Promise<AppRelease> | undefined;
 
 export const appVersion = packageMetadata.version;
 
@@ -36,28 +37,26 @@ type CachedUpdateCheck = {
 };
 
 export async function checkForAppUpdate(force = false) {
+  const cached = loadCachedUpdateCheck();
+
   if (!force) {
-    const cached = loadCachedUpdateCheck();
     if (cached && Date.now() - cached.checkedAt < updateCacheLifetime) {
       return cached.release;
     }
   }
 
-  const response = await fetch(latestReleaseUrl, {
-    headers: {
-      Accept: "application/vnd.github+json"
-    }
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub ${response.status}`);
+  if (!activeUpdateRequest) {
+    activeUpdateRequest = fetchLatestRelease().finally(() => {
+      activeUpdateRequest = undefined;
+    });
   }
 
-  const release = parseGitHubRelease((await response.json()) as GitHubReleaseResponse);
-  saveCachedUpdateCheck({
-    checkedAt: Date.now(),
-    release
-  });
-  return release;
+  try {
+    return await activeUpdateRequest;
+  } catch (error) {
+    if (!force && cached) return cached.release;
+    throw error;
+  }
 }
 
 export function isNewerAppVersion(candidate: string, current = appVersion) {
@@ -108,6 +107,25 @@ function parseGitHubRelease(value: GitHubReleaseResponse): AppRelease {
     publishedAt: typeof value.published_at === "string" ? value.published_at : undefined,
     notes: typeof value.body === "string" ? value.body : undefined
   };
+}
+
+async function fetchLatestRelease() {
+  const response = await fetch(`${latestReleaseUrl}?timestamp=${Date.now()}`, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/vnd.github+json"
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub ${response.status}`);
+  }
+
+  const release = parseGitHubRelease((await response.json()) as GitHubReleaseResponse);
+  saveCachedUpdateCheck({
+    checkedAt: Date.now(),
+    release
+  });
+  return release;
 }
 
 function parseVersion(value: string) {

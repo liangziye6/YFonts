@@ -1,6 +1,6 @@
 [package]
 name = "yfonts"
-version = "1.20.0"
+version = "1.20.1"
 description = "Local-first font manager and free-commercial font discovery desktop app."
 authors = ["YFonts"]
 edition = "2021"

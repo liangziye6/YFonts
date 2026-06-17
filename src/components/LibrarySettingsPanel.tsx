@@ -15,7 +15,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   appVersion,
   checkForAppUpdate,
@@ -133,18 +133,7 @@ export function LibrarySettingsPanel({
     };
   }, [onClose, open]);
 
-  useEffect(() => {
-    if (!open || updateCheck.status !== "idle") return;
-    void runUpdateCheck(false);
-  }, [open, updateCheck.status]);
-
-  if (!open) return null;
-
-  const hasLocalIndex = Boolean(localIndex);
-  const root = localIndex?.root ?? t.previewLibrary;
-  const generatedAt = localIndex ? formatDateTime(localIndex.generatedAt) : t.previewOnly;
-
-  async function runUpdateCheck(force: boolean) {
+  const runUpdateCheck = useCallback(async (force: boolean) => {
     setUpdateCheck({ status: "checking" });
     try {
       const release = await checkForAppUpdate(force);
@@ -159,7 +148,18 @@ export function LibrarySettingsPanel({
     } catch {
       setUpdateCheck({ status: "error" });
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    void runUpdateCheck(true);
+  }, [open, runUpdateCheck]);
+
+  if (!open) return null;
+
+  const hasLocalIndex = Boolean(localIndex);
+  const root = localIndex?.root ?? t.previewLibrary;
+  const generatedAt = localIndex ? formatDateTime(localIndex.generatedAt) : t.previewOnly;
 
   return (
     <div className="library-drawer-shell" role="dialog" aria-modal="true" aria-label={t.librarySettings}>
