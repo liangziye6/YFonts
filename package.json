@@ -1,6 +1,6 @@
 {
   "name": "yfonts",
-  "version": "1.20.1",
+  "version": "1.21.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,10 @@
     "build": "node scripts/clean-dist.mjs && tsc && vite build",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
+    "desktop:build:mac": "tauri build --bundles app,dmg",
+    "desktop:build:mac:local": "node scripts/build-mac-local.mjs",
+    "desktop:build:mac:universal:local": "node scripts/build-mac-local.mjs --universal",
+    "desktop:build:windows": "tauri build --bundles nsis",
     "desktop:info": "tauri info",
     "index:fonts": "node scripts/index-font-library.mjs",
     "preview": "vite preview --host 127.0.0.1",
@@ -25,6 +29,6 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
-    "vite": "^6.0.1"
+    "vite": "^6.4.3"
   }
 }

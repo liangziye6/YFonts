@@ -72,9 +72,6 @@ export function WindowTitleBar({ themeMode }: WindowTitleBarProps) {
           <img src={appIcon} alt="" data-tauri-drag-region />
         </span>
         <strong data-tauri-drag-region>YFonts</strong>
-        <span className="window-titlebar-developer" data-tauri-drag-region>
-          by LYZ
-        </span>
       </div>
 
       <div className="window-titlebar-controls">

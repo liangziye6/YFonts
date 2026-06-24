@@ -12,6 +12,7 @@ import {
   type LucideIcon,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings2,
   ShieldCheck,
   Star,
   Trash2
@@ -19,6 +20,7 @@ import {
 import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import appIcon from "../assets/yfonts-icon.png";
 import { t } from "../lib/i18n";
+import { detectPlatform } from "../lib/platform";
 import { appVersion } from "../lib/appUpdate";
 import type { ProjectPack } from "../types";
 
@@ -39,6 +41,7 @@ type SidebarProps = {
   counts: Record<SectionId, number>;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  onOpenLibrarySettings: () => void;
   hasSelectedFonts: boolean;
   projectPacks: ProjectPack[];
   selectedProjectPackId?: string;
@@ -69,6 +72,7 @@ export function Sidebar({
   counts,
   collapsed,
   onToggleCollapsed,
+  onOpenLibrarySettings,
   hasSelectedFonts,
   projectPacks,
   selectedProjectPackId,
@@ -78,6 +82,7 @@ export function Sidebar({
   onRemoveProjectPack,
   onDropFontsToProjectPack
 }: SidebarProps) {
+  const isMacOS = detectPlatform() === "macos";
   const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -116,14 +121,17 @@ export function Sidebar({
       if (hasSelectedFonts) return;
       if (isEditableTarget(event.target)) return;
 
-      if (event.key === "Delete") {
+      if (
+        (isMacOS && event.metaKey && event.key === "Backspace") ||
+        (!isMacOS && event.key === "Delete")
+      ) {
         event.preventDefault();
         onRemoveProjectPack(selectedProjectPackId);
         setContextMenu(undefined);
         setRenamingPackId(undefined);
       }
 
-      if (event.key === "F2" && !collapsed) {
+      if (((isMacOS && event.key === "Enter") || (!isMacOS && event.key === "F2")) && !collapsed) {
         event.preventDefault();
         startRenamingProject(selectedProjectPackId);
       }
@@ -134,7 +142,7 @@ export function Sidebar({
     return () => {
       document.removeEventListener("keydown", removeSelectedProjectPack);
     };
-  }, [activeSection, hasSelectedFonts, onRemoveProjectPack, selectedProjectPackId]);
+  }, [activeSection, collapsed, hasSelectedFonts, isMacOS, onRemoveProjectPack, selectedProjectPackId]);
 
   useEffect(() => {
     function handleProjectDragMove(event: Event) {
@@ -289,7 +297,7 @@ export function Sidebar({
             <img src={appIcon} alt="" />
           </div>
           <div>
-            <strong>YFonts {appVersion}</strong>
+            <strong>YFonts</strong>
             <span>{t.appSubtitle}</span>
           </div>
         </div>
@@ -509,6 +517,21 @@ export function Sidebar({
           </div>
         )}
       </section>
+
+      <div className="sidebar-footer">
+        <span className="sidebar-version" title={`LYZ · YFonts ${appVersion}`}>
+          LYZ · v{appVersion}
+        </span>
+        <button
+          className="sidebar-settings-button"
+          type="button"
+          onClick={onOpenLibrarySettings}
+          title={`${t.librarySettings} (${isMacOS ? "⌘," : "Ctrl+,"})`}
+          aria-label={t.librarySettings}
+        >
+          <Settings2 size={17} />
+        </button>
+      </div>
     </aside>
   );
 }

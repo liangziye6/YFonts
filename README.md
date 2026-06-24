@@ -19,7 +19,7 @@ using large personal font collections.
 
 ## Download
 
-Windows builds are published on the
+Windows and macOS builds are published on the
 [Releases page](https://github.com/liangziye6/YFonts/releases).
 
 The installer contains the application only. It does not include the
@@ -42,15 +42,49 @@ npm run dev
 
 Run the desktop application:
 
-```powershell
+```bash
 npm run desktop:dev
 ```
 
-Build the Windows installer:
+Build the installer for the current platform:
 
-```powershell
+```bash
 npm run desktop:build
 ```
+
+Build platform-specific packages:
+
+```bash
+# Run on macOS. Produces .app and .dmg bundles.
+npm run desktop:build:mac
+
+# Run on macOS for local testing with ad-hoc signing and DMG verification.
+npm run desktop:build:mac:local
+
+# Run on macOS for an Apple Silicon + Intel local test DMG.
+npm run desktop:build:mac:universal:local
+
+# Run on Windows. Produces an NSIS .exe installer.
+npm run desktop:build:windows
+```
+
+Windows and macOS packages are built from the same repository. The native
+bundle must be compiled on its target operating system.
+
+Public macOS distribution requires a paid Apple Developer account, a
+`Developer ID Application` certificate, and Apple notarization. The local
+ad-hoc build is suitable for development and testing, but other users may need
+to allow it manually in Privacy & Security.
+
+The release workflow expects these GitHub Actions secrets:
+
+- `APPLE_CERTIFICATE`: base64-encoded Developer ID `.p12`
+- `APPLE_CERTIFICATE_PASSWORD`: password used when exporting the `.p12`
+- `KEYCHAIN_PASSWORD`: temporary CI keychain password
+- `APPLE_SIGNING_IDENTITY`: full Developer ID Application identity
+- `APPLE_ID`: Apple Developer account email
+- `APPLE_PASSWORD`: app-specific password
+- `APPLE_TEAM_ID`: Apple Developer Team ID
 
 ## Architecture
 

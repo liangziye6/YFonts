@@ -160,8 +160,9 @@ function loadThemeMode(): ThemeMode {
   try {
     const savedMode = window.localStorage.getItem(themeStorageKey);
     if (savedMode === "dark" || savedMode === "light") return savedMode;
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
   } catch {
-    // Use light mode when local storage is unavailable.
+    // Use light mode when browser APIs are unavailable.
   }
 
   return "light";
@@ -218,8 +219,35 @@ function App() {
   const [onlineDetailBusyId, setOnlineDetailBusyId] = useState<string>();
   const [onlineDownloadBusyId, setOnlineDownloadBusyId] = useState<string>();
   const [notice, setNotice] = useState("");
+  const appMenuActionRef = useRef<(action: string) => void>(() => {});
 
-  const platform = platformProfiles[detectPlatform()];
+  const detectedPlatform = detectPlatform();
+  const platform = platformProfiles[detectedPlatform];
+  const usesNativeMacTitleBar = detectedPlatform === "macos" && isTauriRuntime();
+
+  useEffect(() => {
+    function handlePlatformShortcuts(event: KeyboardEvent) {
+      const usesCommandKey = detectedPlatform === "macos" ? event.metaKey : event.ctrlKey;
+      if (!usesCommandKey || event.altKey) return;
+
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>(
+          `input[aria-label="${t.searchFont}"]`
+        );
+        searchInput?.focus();
+        searchInput?.select();
+      }
+
+      if (event.key === ",") {
+        event.preventDefault();
+        setIsLibrarySettingsOpen(true);
+      }
+    }
+
+    document.addEventListener("keydown", handlePlatformShortcuts);
+    return () => document.removeEventListener("keydown", handlePlatformShortcuts);
+  }, [detectedPlatform]);
 
   useEffect(() => {
     void (async () => {
@@ -233,6 +261,55 @@ function App() {
     document.documentElement.style.colorScheme = themeMode;
     window.localStorage.setItem(themeStorageKey, themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let disposed = false;
+    void (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const appWindow = getCurrentWindow();
+      if (disposed) return;
+      if (detectedPlatform === "macos") {
+        await appWindow.setTitleBarStyle("overlay");
+      }
+      await appWindow.setTheme(themeMode);
+    })().catch(() => {
+      // Browser preview and unsupported window managers keep the app-level theme only.
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [detectedPlatform, themeMode]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<string>("yfonts-menu-action", (event) => {
+          appMenuActionRef.current(event.payload);
+        })
+      )
+      .then((stopListening) => {
+        if (disposed) {
+          stopListening();
+          return;
+        }
+        unlisten = stopListening;
+      })
+      .catch(() => {
+        // The browser preview does not expose the native macOS application menu.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     function handleOnline() {
@@ -579,7 +656,11 @@ function App() {
     if (activeSection !== "projectPacks" || selectedFontIds.size === 0) return;
 
     function removeProjectSelectionWithKeyboard(event: KeyboardEvent) {
-      if (event.key !== "Delete" || isEditableTarget(event.target)) return;
+      const isRemoveShortcut =
+        detectedPlatform === "macos"
+          ? event.metaKey && event.key === "Backspace"
+          : event.key === "Delete";
+      if (!isRemoveShortcut || isEditableTarget(event.target)) return;
 
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -591,7 +672,13 @@ function App() {
     return () => {
       document.removeEventListener("keydown", removeProjectSelectionWithKeyboard);
     };
-  }, [activeSection, selectedFontIds.size, selectedFilteredFonts, selectedProjectPack?.id]);
+  }, [
+    activeSection,
+    detectedPlatform,
+    selectedFontIds.size,
+    selectedFilteredFonts,
+    selectedProjectPack?.id
+  ]);
 
   useEffect(() => {
     if (!selectedFont) return;
@@ -2284,12 +2371,74 @@ function App() {
     void openExternalUrl(url);
   }
 
+  appMenuActionRef.current = (action) => {
+    const showSection = (section: SectionId) => {
+      setActiveSection(section);
+      setCategory(t.all);
+      setSourceFilter(section === "online" ? "google-fonts" : "all");
+      setNotice("");
+    };
+
+    switch (action) {
+      case "yfonts-settings":
+      case "yfonts-check-updates":
+        setIsLibrarySettingsOpen(true);
+        break;
+      case "yfonts-import-folder":
+        void importFolder();
+        break;
+      case "yfonts-import-files":
+        importFiles();
+        break;
+      case "yfonts-sync-index":
+        void reloadLocalIndex(true);
+        break;
+      case "yfonts-search": {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          `input[aria-label="${t.searchFont}"]`
+        );
+        searchInput?.focus();
+        searchInput?.select();
+        break;
+      }
+      case "yfonts-show-all":
+        showSection("all");
+        break;
+      case "yfonts-show-local":
+        showSection("local");
+        break;
+      case "yfonts-show-online":
+        showSection("online");
+        break;
+      case "yfonts-show-favorites":
+        showSection("favorites");
+        break;
+      case "yfonts-show-projects":
+        showSection("projectPacks");
+        break;
+      case "yfonts-manage-categories":
+        setIsCategoryManagerOpen(true);
+        break;
+      case "yfonts-toggle-sidebar":
+        setIsSidebarCollapsed((collapsed) => !collapsed);
+        break;
+      case "yfonts-toggle-theme":
+        setThemeMode((mode) => (mode === "dark" ? "light" : "dark"));
+        break;
+      case "yfonts-open-github":
+        void openExternalUrl("https://github.com/liangziye6/YFonts/");
+        break;
+    }
+  };
+
   return (
     <div
       className={[
         "app-shell",
+        `platform-${detectedPlatform}`,
         isSidebarCollapsed ? "sidebar-collapsed" : "",
-        themeMode === "dark" ? "dark" : ""
+        themeMode === "dark" ? "dark" : "",
+        usesNativeMacTitleBar ? "native-macos-window" : ""
       ]
         .filter(Boolean)
         .join(" ")}
@@ -2300,7 +2449,10 @@ function App() {
         variantId={selectedVariantId}
         familyName={selectedDetailFontFamily}
       />
-      <WindowTitleBar themeMode={themeMode} />
+      {usesNativeMacTitleBar ? (
+        <div className="macos-titlebar-drag-region" data-tauri-drag-region />
+      ) : null}
+      {!usesNativeMacTitleBar ? <WindowTitleBar themeMode={themeMode} /> : null}
       <Sidebar
         activeSection={activeSection}
         onChange={(section) => {
@@ -2312,6 +2464,7 @@ function App() {
         counts={counts}
         collapsed={isSidebarCollapsed}
         onToggleCollapsed={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
+        onOpenLibrarySettings={() => setIsLibrarySettingsOpen(true)}
         hasSelectedFonts={selectedFontIds.size > 0}
         projectPacks={projectPacks}
         selectedProjectPackId={selectedProjectPack?.id}
@@ -2339,7 +2492,6 @@ function App() {
           languageFilter={languageFilter}
           onLanguageFilterChange={setLanguageFilter}
           isImportingFolder={isImportingFolder}
-          onOpenLibrarySettings={() => setIsLibrarySettingsOpen(true)}
           onImportFolder={importFolder}
           onImportFiles={importFiles}
           onReloadIndex={() => void reloadLocalIndex(true)}

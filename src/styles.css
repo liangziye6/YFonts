@@ -73,6 +73,58 @@ button {
   grid-template-columns: 76px minmax(0, 1fr);
 }
 
+.app-shell.platform-macos {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue",
+    sans-serif;
+  accent-color: #0a84ff;
+}
+
+.app-shell.native-macos-window {
+  --macos-titlebar-height: 48px;
+  position: relative;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "sidebar workspace";
+  padding-top: var(--macos-titlebar-height);
+}
+
+.macos-titlebar-drag-region {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 84px;
+  z-index: 120;
+  height: var(--macos-titlebar-height);
+  -webkit-app-region: drag;
+}
+
+.app-shell.native-macos-window.sidebar-collapsed .macos-titlebar-drag-region {
+  left: 84px;
+}
+
+.app-shell.platform-macos :where(button, input, select, textarea):focus-visible {
+  outline: 3px solid rgba(10, 132, 255, 0.28);
+  outline-offset: 1px;
+}
+
+.app-shell.platform-macos :where(
+    .filter-popover,
+    .import-menu,
+    .row-menu,
+    .project-context-menu,
+    .variant-popover,
+    .folder-scan-dialog,
+    .category-manager-dialog,
+    .compare-panel,
+    .library-drawer
+  ) {
+  border-radius: 11px;
+}
+
+.app-shell.platform-macos :where(.command-button, .icon-button, .tab) {
+  border-radius: 9px;
+}
+
 .window-titlebar {
   grid-area: titlebar;
   display: flex;
@@ -99,16 +151,6 @@ button {
   overflow: hidden;
   font-size: 12px;
   font-weight: 650;
-  line-height: 1;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.window-titlebar-developer {
-  overflow: hidden;
-  color: #8490a0;
-  font-size: 11px;
   line-height: 1;
   letter-spacing: 0;
   text-overflow: ellipsis;
@@ -311,6 +353,52 @@ button {
   top: 56px;
   right: 50%;
   transform: translateX(50%);
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  min-height: 30px;
+  margin-top: auto;
+  padding: 0 4px 0 9px;
+}
+
+.sidebar-version {
+  color: #9aa3af;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.sidebar-settings-button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: #7b8491;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.sidebar-settings-button:hover {
+  color: #1d4ed8;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.sidebar.collapsed .sidebar-footer {
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+}
+
+.sidebar.collapsed .sidebar-version {
+  display: none;
 }
 
 .sidebar.collapsed .nav-list {
@@ -646,7 +734,7 @@ button {
 .workspace {
   grid-area: workspace;
   display: grid;
-  grid-template-rows: 64px minmax(0, 1fr);
+  grid-template-rows: 100px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -656,10 +744,11 @@ button {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(210px, 320px) minmax(260px, 1fr) auto auto auto auto auto;
+  grid-template-columns: minmax(210px, 320px) minmax(260px, 1fr) auto auto auto;
+  grid-template-rows: 40px 32px;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px 10px 4px;
+  gap: 8px 10px;
+  padding: 10px 12px 8px 4px;
   border-bottom: 0;
   background: transparent;
 }
@@ -694,86 +783,105 @@ button {
   outline: 0;
 }
 
+.search-shortcut {
+  flex: 0 0 auto;
+  min-width: 28px;
+  padding: 2px 5px;
+  color: #8993a1;
+  border: 1px solid #dce3eb;
+  border-radius: 5px;
+  background: #f8fafc;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.search-box:focus-within .search-shortcut {
+  color: #0a65d8;
+  border-color: rgba(10, 132, 255, 0.34);
+  background: rgba(10, 132, 255, 0.08);
+}
+
 .preview-input {
   padding: 0 14px;
 }
 
-.filter-group {
-  padding-right: 8px;
-}
-
-.filter-group select {
-  height: 30px;
-  max-width: 128px;
-  color: #334155;
-  border: 0;
-  outline: 0;
-  background: transparent;
-}
-
-.filter-control {
-  display: block;
+.quick-filter-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
+  height: 32px;
+  padding: 0 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
-.filter-menu-wrap {
-  position: relative;
+.quick-filter-bar::-webkit-scrollbar {
   display: none;
 }
 
-.filter-menu-button.active {
-  color: #1d4ed8;
-  border-color: #9bbcff;
-  background: #edf4ff;
+.quick-filter-icon {
+  flex: 0 0 auto;
+  color: #7c8796;
 }
 
-.filter-count {
-  display: inline-grid;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  place-items: center;
-  color: #ffffff;
-  border-radius: 9px;
-  background: #2563eb;
-  font-size: 11px;
+.quick-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.quick-filter-group:not(:last-child) {
+  padding-right: 12px;
+  border-right: 1px solid #d7dde6;
+}
+
+.quick-filter-group > span {
+  display: inline-flex;
+  min-height: 22px;
+  padding: 0 7px;
+  align-items: center;
+  color: #505b6b;
+  border-radius: 6px;
+  background: #dfe4eb;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-.filter-popover {
-  position: absolute;
-  top: 46px;
-  right: 0;
-  z-index: 35;
-  display: grid;
-  width: 238px;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #dce3ec;
-  border-radius: 8px;
+.quick-filter-group > div {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.quick-filter-group button {
+  min-height: 26px;
+  padding: 0 8px;
+  color: #596576;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.quick-filter-group button:hover {
+  color: #1d4ed8;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.quick-filter-group button.active {
+  color: #1559c5;
+  border-color: #c6d8f7;
   background: #ffffff;
-  box-shadow: 0 14px 32px rgba(22, 30, 44, 0.16);
-}
-
-.filter-control.labelled {
-  display: grid;
-  gap: 5px;
-}
-
-.filter-control.labelled span {
-  color: #667386;
-  font-size: 12px;
-}
-
-.filter-control.labelled select {
-  width: 100%;
-  height: 34px;
-  padding: 0 9px;
-  color: #172033;
-  border: 1px solid #dbe4ef;
-  border-radius: 8px;
-  background: #ffffff;
-  outline: none;
+  box-shadow: 0 1px 2px rgba(28, 44, 72, 0.06);
 }
 
 .command-button,
@@ -1544,6 +1652,18 @@ button {
 
 .font-row * {
   user-select: none;
+}
+
+body.project-font-dragging,
+body.project-font-dragging * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+body.project-font-dragging ::selection {
+  color: inherit;
+  background: transparent;
 }
 
 .font-row:hover {
@@ -3772,10 +3892,6 @@ button {
   background: #0f0f10;
 }
 
-.app-shell.dark .window-titlebar-developer {
-  color: #747985;
-}
-
 .app-shell.dark .window-titlebar-controls button {
   color: #aeb3be;
 }
@@ -3874,10 +3990,59 @@ button {
   background: #1e1e20;
 }
 
+.app-shell.dark .search-shortcut {
+  color: #aeb3be;
+  border-color: #34343a;
+  background: #242427;
+}
+
+.app-shell.dark .search-box:focus-within .search-shortcut {
+  color: #d6dbff;
+  border-color: #5965e8;
+  background: #252742;
+}
+
+.app-shell.dark .command-button.ghost:disabled:hover,
+.app-shell.dark .icon-button:disabled:hover {
+  color: #666a73;
+  border-color: #303034;
+  background: #1e1e20;
+}
+
 .app-shell.dark .filter-menu-button.active {
   color: #cbd1ff;
   border-color: #5965e8;
   background: #232326;
+}
+
+.app-shell.dark .quick-filter-icon,
+.app-shell.dark .quick-filter-icon {
+  color: #83868f;
+}
+
+.app-shell.dark .quick-filter-group:not(:last-child) {
+  border-right-color: #33343a;
+}
+
+.app-shell.dark .quick-filter-group > span {
+  color: #c4c6cc;
+  background: #292a2e;
+}
+
+.app-shell.dark .quick-filter-group button {
+  color: #a7aab2;
+}
+
+.app-shell.dark .quick-filter-group button:hover {
+  color: #d6dbff;
+  background: #202023;
+}
+
+.app-shell.dark .quick-filter-group button.active {
+  color: #d6dbff;
+  border-color: #40477d;
+  background: #252742;
+  box-shadow: none;
 }
 
 .app-shell.dark .filter-count {
@@ -3958,6 +4123,7 @@ button {
 }
 
 .app-shell.dark .brand span,
+.app-shell.dark .sidebar-version,
 .app-shell.dark .browser-header span,
 .app-shell.dark .browser-header em,
 .app-shell.dark .bulk-summary span,
@@ -4027,6 +4193,15 @@ button {
   background: #232326;
 }
 
+.app-shell.dark .sidebar-settings-button {
+  color: #8e9199;
+}
+
+.app-shell.dark .sidebar-settings-button:hover {
+  color: #cbd1ff;
+  background: #232326;
+}
+
 .app-shell.dark .nav-item,
 .app-shell.dark .project-tree-title,
 .app-shell.dark .project-pack-item > button {
@@ -4082,6 +4257,100 @@ button {
 .app-shell.dark .project-context-menu button.danger:hover {
   color: #ffaaa5;
   background: #2a1919;
+}
+
+.app-shell.platform-macos :where(
+    .row-menu,
+    .project-context-menu,
+    .import-menu,
+    .variant-popover
+  ) {
+  border-color: rgba(116, 126, 142, 0.22);
+  background: rgba(247, 249, 252, 0.78);
+  box-shadow:
+    0 18px 46px rgba(25, 32, 44, 0.2),
+    0 2px 8px rgba(25, 32, 44, 0.1),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.62);
+  -webkit-backdrop-filter: saturate(180%) blur(26px);
+  backdrop-filter: saturate(180%) blur(26px);
+}
+
+.app-shell.platform-macos :where(
+    .row-menu button:hover:not(:disabled),
+    .project-context-menu button:hover:not(:disabled),
+    .import-menu button:hover:not(:disabled)
+  ) {
+  color: #075dc7;
+  background: rgba(10, 105, 255, 0.12);
+}
+
+.app-shell.platform-macos :where(
+    .row-menu button:disabled,
+    .project-context-menu button:disabled,
+    .import-menu button:disabled
+  ) {
+  color: rgba(52, 65, 85, 0.42);
+  background: transparent;
+}
+
+.app-shell.platform-macos :where(
+    .row-menu button:disabled:hover,
+    .project-context-menu button:disabled:hover,
+    .import-menu button:disabled:hover
+  ) {
+  color: rgba(52, 65, 85, 0.42);
+  background: rgba(98, 110, 128, 0.06);
+}
+
+.app-shell.platform-macos :where(
+    .row-menu button.danger:hover,
+    .project-context-menu button.danger:hover
+  ) {
+  color: #c3221f;
+  background: rgba(215, 50, 48, 0.1);
+}
+
+.app-shell.platform-macos.dark :where(
+    .row-menu,
+    .project-context-menu,
+    .import-menu,
+    .variant-popover
+  ) {
+  border-color: rgba(255, 255, 255, 0.13);
+  background: rgba(37, 37, 40, 0.76);
+  box-shadow:
+    0 20px 52px rgba(0, 0, 0, 0.46),
+    0 2px 10px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+
+.app-shell.platform-macos.dark :where(
+    .row-menu button:hover:not(:disabled),
+    .project-context-menu button:hover:not(:disabled),
+    .import-menu button:hover:not(:disabled)
+  ) {
+  color: #ffffff;
+  background: rgba(10, 105, 255, 0.82);
+}
+
+.app-shell.platform-macos.dark :where(
+    .row-menu button:disabled,
+    .project-context-menu button:disabled,
+    .import-menu button:disabled,
+    .row-menu button:disabled:hover,
+    .project-context-menu button:disabled:hover,
+    .import-menu button:disabled:hover
+  ) {
+  color: rgba(198, 200, 207, 0.38);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.app-shell.platform-macos.dark :where(
+    .row-menu button.danger:hover,
+    .project-context-menu button.danger:hover
+  ) {
+  color: #ffffff;
+  background: rgba(215, 50, 48, 0.82);
 }
 
 .app-shell.dark .variant-popover-head strong,
@@ -4478,15 +4747,7 @@ button {
 
 @media (max-width: 1480px) {
   .topbar {
-    grid-template-columns: minmax(190px, 1fr) minmax(220px, 1.25fr) auto auto auto auto auto;
-  }
-
-  .desktop-filter-group {
-    display: none;
-  }
-
-  .filter-menu-wrap {
-    display: block;
+    grid-template-columns: minmax(190px, 1fr) minmax(220px, 1.25fr) auto auto auto;
   }
 }
 
@@ -4496,10 +4757,9 @@ button {
   }
 
   .topbar {
-    grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) auto auto;
+    grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) auto auto auto;
   }
 
-  .desktop-filter-group,
   .topbar > .icon-button {
     display: none;
   }
