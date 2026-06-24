@@ -348,14 +348,16 @@ export function FontList({
                   type="button"
                   title={t.viewWeightsAndFiles}
                   aria-label={t.viewWeightsAndFiles}
+                  onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
+                    const shouldClose =
+                      menuState?.fontId === font.id && menuState.mode === "variants";
                     document.dispatchEvent(new Event("yfonts:close-context-menus"));
-                    setMenuState(
-                      menuState?.fontId === font.id && menuState.mode === "variants"
-                        ? undefined
-                        : { fontId: font.id, mode: "variants" }
-                    );
+                    if (shouldClose) return;
+
+                    onSelect(font.id);
+                    setMenuState({ fontId: font.id, mode: "variants" });
                   }}
                 >
                   <Layers size={16} />
@@ -614,6 +616,12 @@ function beginProjectPointerDrag({
   let dragImage: HTMLElement | undefined;
   let hasStarted = false;
 
+  function preventTextSelection(selectionEvent: Event) {
+    selectionEvent.preventDefault();
+  }
+
+  document.addEventListener("selectstart", preventTextSelection, true);
+
   try {
     dragSource.setPointerCapture(pointerId);
   } catch {
@@ -622,6 +630,7 @@ function beginProjectPointerDrag({
 
   function startDrag(pointerEvent: PointerEvent) {
     hasStarted = true;
+    document.getSelection()?.removeAllRanges();
     window.__YFONTS_DRAG_FONT_IDS__ = fontIds;
     publishDragDiagnostic({
       stage: "start",
@@ -668,6 +677,7 @@ function beginProjectPointerDrag({
     document.removeEventListener("pointermove", handlePointerMove);
     document.removeEventListener("pointerup", handlePointerUp);
     document.removeEventListener("pointercancel", handlePointerCancel);
+    document.removeEventListener("selectstart", preventTextSelection, true);
   }
 
   function handlePointerMove(pointerEvent: PointerEvent) {

@@ -5,6 +5,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 
 const FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "ttc", "woff", "woff2"];
 const INSTALLABLE_FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "ttc"];
@@ -2327,7 +2331,19 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(build_macos_menu)
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref();
+            if id.starts_with("yfonts-") {
+                let _ = app.emit("yfonts-menu-action", id);
+            }
+        });
+
+    builder
         .invoke_handler(tauri::generate_handler![
             scan_font_folder,
             pick_font_files,
@@ -2346,4 +2362,128 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running YFonts");
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
+    let settings = MenuItemBuilder::with_id("yfonts-settings", "字体库设置…")
+        .accelerator("CmdOrCtrl+,")
+        .build(app)?;
+    let import_folder = MenuItemBuilder::with_id("yfonts-import-folder", "导入字体文件夹…")
+        .accelerator("CmdOrCtrl+O")
+        .build(app)?;
+    let import_files = MenuItemBuilder::with_id("yfonts-import-files", "导入字体文件…")
+        .accelerator("CmdOrCtrl+Shift+O")
+        .build(app)?;
+    let sync_index = MenuItemBuilder::with_id("yfonts-sync-index", "同步字体索引")
+        .accelerator("CmdOrCtrl+R")
+        .build(app)?;
+    let search = MenuItemBuilder::with_id("yfonts-search", "搜索字体")
+        .accelerator("CmdOrCtrl+F")
+        .build(app)?;
+    let show_all = MenuItemBuilder::with_id("yfonts-show-all", "全部字体")
+        .accelerator("CmdOrCtrl+1")
+        .build(app)?;
+    let show_local = MenuItemBuilder::with_id("yfonts-show-local", "本地字体包")
+        .accelerator("CmdOrCtrl+2")
+        .build(app)?;
+    let show_online = MenuItemBuilder::with_id("yfonts-show-online", "在线发现")
+        .accelerator("CmdOrCtrl+3")
+        .build(app)?;
+    let show_favorites = MenuItemBuilder::with_id("yfonts-show-favorites", "收藏字体")
+        .accelerator("CmdOrCtrl+4")
+        .build(app)?;
+    let show_projects = MenuItemBuilder::with_id("yfonts-show-projects", "项目字体包")
+        .accelerator("CmdOrCtrl+5")
+        .build(app)?;
+    let manage_categories = MenuItemBuilder::with_id("yfonts-manage-categories", "管理字体分类…")
+        .build(app)?;
+    let toggle_sidebar = MenuItemBuilder::with_id("yfonts-toggle-sidebar", "显示或隐藏侧边栏")
+        .accelerator("CmdOrCtrl+Shift+S")
+        .build(app)?;
+    let toggle_theme = MenuItemBuilder::with_id("yfonts-toggle-theme", "切换深色与浅色外观")
+        .build(app)?;
+    let check_updates = MenuItemBuilder::with_id("yfonts-check-updates", "检查更新…")
+        .build(app)?;
+    let open_github = MenuItemBuilder::with_id("yfonts-open-github", "打开 YFonts GitHub")
+        .build(app)?;
+
+    let about = AboutMetadata {
+        name: Some("YFonts".to_string()),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        copyright: Some("© 2026 LYZ".to_string()),
+        credits: Some("Created by LYZ".to_string()),
+        ..Default::default()
+    };
+
+    let app_menu = SubmenuBuilder::new(app, "YFonts")
+        .about_with_text("关于 YFonts", Some(about))
+        .item(&settings)
+        .separator()
+        .services_with_text("服务")
+        .separator()
+        .hide_with_text("隐藏 YFonts")
+        .hide_others_with_text("隐藏其他应用")
+        .show_all_with_text("全部显示")
+        .separator()
+        .quit_with_text("退出 YFonts")
+        .build()?;
+
+    let file_menu = SubmenuBuilder::new(app, "文件")
+        .item(&import_folder)
+        .item(&import_files)
+        .separator()
+        .item(&sync_index)
+        .separator()
+        .close_window_with_text("关闭窗口")
+        .build()?;
+
+    let edit_menu = SubmenuBuilder::new(app, "编辑")
+        .undo_with_text("撤销")
+        .redo_with_text("重做")
+        .separator()
+        .cut_with_text("剪切")
+        .copy_with_text("复制")
+        .paste_with_text("粘贴")
+        .select_all_with_text("全选")
+        .build()?;
+
+    let view_menu = SubmenuBuilder::new(app, "视图")
+        .item(&search)
+        .separator()
+        .item(&show_all)
+        .item(&show_local)
+        .item(&show_online)
+        .item(&show_favorites)
+        .item(&show_projects)
+        .separator()
+        .item(&manage_categories)
+        .item(&toggle_sidebar)
+        .item(&toggle_theme)
+        .separator()
+        .fullscreen_with_text("进入或退出全屏")
+        .build()?;
+
+    let window_menu = SubmenuBuilder::new(app, "窗口")
+        .minimize_with_text("最小化")
+        .maximize_with_text("缩放")
+        .separator()
+        .bring_all_to_front_with_text("前置全部窗口")
+        .build()?;
+
+    let help_menu = SubmenuBuilder::new(app, "帮助")
+        .item(&check_updates)
+        .item(&open_github)
+        .build()?;
+
+    MenuBuilder::new(app)
+        .items(&[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu,
+        ])
+        .build()
 }
